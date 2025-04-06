@@ -255,7 +255,7 @@
         .domain(d3.extent(mergedData, d => d.co2))
         .range([0, width]);
 
-      // For yScale, filter out non-positive values so the domain doesn't extend to 0.
+      // For yScale, filter out non-positive production values so the domain doesn't extend to 0.
       const productionValues = mergedData.map(d => d.production).filter(v => v > 0);
       yScale = d3.scaleLinear()
         .domain([d3.min(productionValues), d3.max(mergedData, d => d.production)])
@@ -325,10 +325,11 @@
         .style("text-anchor", "middle")
         .text("CO₂ Emissions (Gigatons)");
 
-      // Y-axis: Use the actual production value with comma formatting.
+      // Y-axis: use a fixed 5 ticks and comma formatting without dividing by 1000.
       svg.append("g")
         .attr("class", "y-axis")
         .call(d3.axisLeft(yScale)
+          .ticks(5)
           .tickFormat(d3.format(",.0f"))
         );
 
