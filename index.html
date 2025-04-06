@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Correlation: CO₂ Emissions vs Crop Production</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f0f4f8;
+      margin: 20px;
+      text-align: center;
+    }
+    h1 {
+      color: #333;
+    }
+    #controls {
+      margin-bottom: 20px;
+    }
+    #sliderLabel {
+      font-size: 16px;
+      font-weight: bold;
+      margin-right: 10px;
+    }
+    svg {
+      background: #ffffff;
+      border: 1px solid #ccc;
+      box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+      margin: auto;
+      display: block;
+    }
+    .tooltip {
+      position: absolute;
+      background: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      padding: 6px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      font-size: 12px;
+      opacity: 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>CO₂ Emissions vs Crop Production in the US</h1>
+  <div id="controls">
+    <span id="sliderLabel">Minimum Year:</span>
+    <input type="range" id="yearSlider" min="0" max="0" step="1">
+    <span id="yearValue"></span>
+  </div>
+  <svg id="chart" width="900" height="500"></svg>
+  <div class="tooltip" id="tooltip"></div>
+  
+  <script>
+    // Gist URLs for the datasets
+    const cropURL = "https://gist.githubusercontent.com/mystrycodes/3d3cf36c88a4f23a187cb4e12a835e10/raw/5aebb1fc334be000f4b756db6d5c83adf71e89ab/CropProduction.csv";
+    const co2URL  = "https://gist.githubusercontent.com/mystrycodes/f3e133db6c35f1f7180296e872441fe4/raw/4c5bc29c4c18f3510bead103c2188d5a919f066d/Co2emmission.csv";
+    
+    // Set up SVG canvas and margins
+    const svg = d3.select("#chart"),
+          margin = {top: 50, right: 70, bottom: 60, left: 80},
+          width = +svg.attr("width") - margin.left - margin.right,
+          height = +svg.attr("height") - margin.top - margin.bottom;
+    
+    const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+    const tooltip = d3.select("#tooltip");
+    
+    // Global variable to hold merged data
+    let mergedData = [];
+    
+    // Function to perform simple linear regression on filtered data
+    function linearRegression(data) {
+      const n = data.length;
+      let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+      data.forEach(d => {
+        sumX += d.CO2;
+        sumY += d.Production;
+        sumXY += d.CO2 * d.Production;
+        sumXX += d.CO2 * d.CO2;
+      });
+      const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+      const intercept = (sumY - slope * sumX) / n;
+      return {slope, intercept};
+    }
+    
+    // Load both CSV files concurrently
+    Promise.all([d3.csv(cropURL), d3.csv(co2URL)]).then(function([cropData, co2Data]) {
+      // --- Process Crop Production Data ---
+      // Expected columns: index,Country,INDICATOR,SUBJECT,MEASURE,FREQUENCY,TIME,Value,Flag Codes
+      // We'll rename TIME to Year and Value to Production.
+      cropData.forEach(d => {
+        d.Year = +d.TIME;
+        d.Production = +d.Value;
+      });
+      // Filter for United States
+      cropData = cropData.filter(d => d.Country === "United States");
+      // Aggregate crop production by Year (sum across all crops)
+      const aggregatedCrop = Array.from(
+        d3.rollup(cropData, v => d3.sum(v, d => d.Production), d => d.Year),
+        ([Year, Production]) => ({ Year: +Year, Production })
+      );
+      
+      // --- Process CO₂ Emission Data ---
+      // Expected similar columns: index,Country,INDICATOR,SUBJECT,MEASURE,FREQUENCY,TIME,Value,Flag Codes
+      // Rename TIME to Year and Value to CO2.
+      co2Data.forEach(d => {
+        d.Year = +d.TIME;
+        d.CO2 = +d.Value;
+      });
+      // Filter for United States
+      co2Data = co2Data.filter(d => d.Country === "United States");
+      // Aggregate CO2 emissions by Year (use average or sum; here we take the average)
+      const aggregatedCO2 = Array.from(
+        d3.rollup(co2Data, v => d3.mean(v, d => d.CO2), d => d.Year),
+        ([Year, CO2]) => ({ Year: +Year, CO2 })
+      );
+      
+      // --- Merge the two aggregated datasets by Year ---
+      // For each year in aggregatedCrop, find matching CO2 data.
+      aggregatedCrop.forEach(d => {
+        const match = aggregatedCO2.find(c => c.Year === d.Year);
+        if (match) {
+          d.CO2 = match.CO2;
+        }
+      });
+      // Filter out years that do not have CO2 data.
+      mergedData = aggregatedCrop.filter(d => d.CO2 !== undefined);
+      
+      // Sort merged data by Year
+      mergedData.sort((a, b) => a.Year - b.Year);
+      
+      // Initialize slider domain based on mergedData
+      const minYear = d3.min(mergedData, d => d.Year);
+      const maxYear = d3.max(mergedData, d => d.Year);
+      const yearSlider = d3.select("#yearSlider")
+                           .attr("min", minYear)
+                           .attr("max", maxYear)
+                           .attr("value", minYear);
+      d3.select("#yearValue").text(minYear);
+      
+      // Initial render using all data (minYear filter)
+      updateChart(minYear);
+      
+      // Update chart when slider value changes
+      yearSlider.on("input", function() {
+        const selectedYear = +this.value;
+        d3.select("#yearValue").text(selectedYear);
+        updateChart(selectedYear);
+      });
+    }).catch(function(error) {
+      console.error("Error loading datasets:", error);
+    });
+    
+    // Set up scales (domains will be updated in updateChart)
+    const xScale = d3.scaleLinear().range([0, width]);
+    const yScale = d3.scaleLinear().range([height, 0]);
+    
+    // Add axis groups
+    const xAxisGroup = g.append("g").attr("transform", `translate(0, ${height})`);
+    const yAxisGroup = g.append("g");
+    
+    // Axis labels
+    g.append("text")
+     .attr("class", "x label")
+     .attr("x", width / 2)
+     .attr("y", height + 40)
+     .attr("text-anchor", "middle")
+     .attr("fill", "#333")
+     .text("CO₂ Emissions (units)"); // Adjust unit as needed
+    
+    g.append("text")
+     .attr("class", "y label")
+     .attr("transform", "rotate(-90)")
+     .attr("x", -height / 2)
+     .attr("y", -60)
+     .attr("text-anchor", "middle")
+     .attr("fill", "#333")
+     .text("Crop Production (units)"); // Adjust unit as needed
+    
+    // Function to update the scatter plot and trendline based on selected minimum year
+    function updateChart(minYearSelected) {
+      // Filter data for years >= minYearSelected
+      const filteredData = mergedData.filter(d => d.Year >= minYearSelected);
+      
+      // Update scales domains based on filtered data
+      xScale.domain(d3.extent(filteredData, d => d.CO2)).nice();
+      yScale.domain(d3.extent(filteredData, d => d.Production)).nice();
+      
+      // Update axes
+      xAxisGroup.transition().duration(750).call(d3.axisBottom(xScale));
+      yAxisGroup.transition().duration(750).call(d3.axisLeft(yScale));
+      
+      // Bind data to circles (each point represents one year)
+      const circles = g.selectAll("circle").data(filteredData, d => d.Year);
+      
+      // Remove old circles
+      circles.exit().transition().duration(750).attr("r", 0).remove();
+      
+      // Update existing circles
+      circles.transition().duration(750)
+        .attr("cx", d => xScale(d.CO2))
+        .attr("cy", d => yScale(d.Production))
+        .attr("r", 6)
+        .attr("fill", "#1f77b4");
+      
+      // Add new circles
+      circles.enter().append("circle")
+        .attr("cx", d => xScale(d.CO2))
+        .attr("cy", d => yScale(d.Production))
+        .attr("r", 0)
+        .attr("fill", "#1f77b4")
+        .attr("stroke", "#333")
+        .attr("stroke-width", 1)
+        .on("mouseover", (event, d) => {
+          d3.select(event.currentTarget)
+            .transition().duration(200).attr("r", 9);
+          tooltip.transition().duration(200).style("opacity", 0.9);
+          tooltip.html(`<strong>Year:</strong> ${d.Year}<br>
+                        <strong>CO₂:</strong> ${d.CO2.toFixed(1)}<br>
+                        <strong>Production:</strong> ${d.Production.toFixed(1)}`)
+                 .style("left", (event.pageX + 10) + "px")
+                 .style("top", (event.pageY - 28) + "px");
+        })
+        .on("mouseout", function(event, d) {
+          d3.select(this).transition().duration(200).attr("r", 6);
+          tooltip.transition().duration(500).style("opacity", 0);
+        })
+        .transition().duration(750)
+        .attr("r", 6);
+      
+      // Compute and draw a trendline using linear regression if there are enough points
+      g.selectAll(".trendline").remove(); // remove any previous trendline
+      
+      if (filteredData.length >= 2) {
+        const lr = linearRegression(filteredData);
+        const xVals = d3.extent(filteredData, d => d.CO2);
+        const trendData = xVals.map(xVal => ({
+          x: xVal,
+          y: lr.slope * xVal + lr.intercept
+        }));
+        
+        g.append("line")
+          .attr("class", "trendline")
+          .attr("x1", xScale(trendData[0].x))
+          .attr("y1", yScale(trendData[0].y))
+          .attr("x2", xScale(trendData[1].x))
+          .attr("y2", yScale(trendData[1].y))
+          .attr("stroke", "red")
+          .attr("stroke-width", 2)
+          .attr("stroke-dasharray", "4,4");
+      }
+    }
+  </script>
+</body>
+</html>
