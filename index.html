@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>US Agricultural Analysis: CO₂ vs Crop Production</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
@@ -11,11 +11,22 @@
       margin: 2rem;
       text-align: center;
     }
-    h1 { color: #2c3e50; margin-bottom: 0.5rem; }
-    #chart { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 0.5rem;
+    }
+    .chart-container {
+      position: relative;
+      display: inline-block;
+    }
+    #chart {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
     .tooltip {
-      position: absolute; 
-      background: rgba(0,0,0,0.9);
+      position: absolute;
+      background: rgba(0, 0, 0, 0.9);
       color: white;
       padding: 0.8rem;
       border-radius: 4px;
@@ -24,21 +35,59 @@
       opacity: 0;
       transition: opacity 0.2s;
     }
-    .trendline { stroke: #e74c3c; stroke-width: 2; stroke-dasharray: 4 2; }
-    .data-point:hover { stroke: #e67e22; stroke-width: 2px; }
-    #loading {
-      position: fixed; top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      background: white; padding: 1rem 2rem;
-      border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    .trendline {
+      stroke: #e74c3c;
+      stroke-width: 2;
+      stroke-dasharray: 4 2;
     }
-    .error-message { color: red; margin-top: 1rem; }
+    .data-point:hover {
+      stroke: #e67e22;
+      stroke-width: 2px;
+    }
+    .zoom-controls {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: white;
+      padding: 10px;
+      border-radius: 5px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    #loading {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 1rem 2rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    .error-message {
+      color: red;
+      margin-top: 1rem;
+    }
+    #controls {
+      margin-bottom: 1rem;
+    }
+    #controls label {
+      margin-right: 10px;
+    }
   </style>
 </head>
 <body>
   <h1>US Agricultural Analysis: CO₂ vs Crop Production</h1>
-  <svg id="chart" width="1000" height="600"></svg>
-  <div id="tooltip" class="tooltip"></div>
+  <div id="controls">
+    <label for="yearSlider">Min Year: <span id="yearLabel"></span></label>
+    <input type="range" id="yearSlider" min="0" max="0" step="1" value="0" />
+  </div>
+  <div class="chart-container">
+    <div class="zoom-controls">
+      <button onclick="resetZoom()">Reset Zoom</button>
+    </div>
+    <svg id="chart" width="1000" height="600"></svg>
+    <div id="tooltip" class="tooltip"></div>
+  </div>
   <div id="loading">Loading agricultural data...</div>
   <div class="error-message" id="errorBox"></div>
 
@@ -57,56 +106,48 @@
       .append("g")
       .attr("transform", `translate(${margin.left}, ${margin.top})`);
 
-    let xScale, yScale;
+    let xScale, yScale, colorScale;
     let zoomBehavior;
-    let mergedData = [];
+    let mergedData = [];  // full merged dataset
+    let yearSlider = null;
 
-    // 1) Load CSVs individually so we can see partial success/failure.
+    // 1) Load CSVs individually
     let cropData = null;
     let co2Data  = null;
 
-    // Load Crop CSV
     d3.csv(CROP_CSV_URL).then(data => {
       console.log("Crop CSV loaded successfully:", data.length, "rows");
       cropData = cleanCropData(data);
       checkIfBothLoaded();
     }).catch(err => {
       console.error("Crop CSV load failed:", err);
-      document.getElementById("errorBox").innerText += "\n⚠️ Crop CSV failed to load.";
+      showError("⚠️ Crop CSV failed to load.");
       checkIfBothLoaded();
     });
 
-    // Load CO2 CSV
     d3.csv(CO2_CSV_URL).then(data => {
       console.log("CO2 CSV loaded successfully:", data.length, "rows");
       co2Data = cleanCO2Data(data);
       checkIfBothLoaded();
     }).catch(err => {
       console.error("CO2 CSV load failed:", err);
-      document.getElementById("errorBox").innerText += "\n⚠️ CO2 CSV failed to load.";
+      showError("⚠️ CO2 CSV failed to load.");
       checkIfBothLoaded();
     });
 
-    // 2) Check if both datasets are loaded or have errors
     function checkIfBothLoaded() {
-      if (cropData === null || co2Data === null) {
-        // Means at least one dataset isn't loaded yet or failed.
-        return;
-      }
-      // Both are loaded or have partial data. Proceed to merge if both are arrays.
+      if (cropData === null || co2Data === null) return;  // not both loaded
       if (!Array.isArray(cropData) || !Array.isArray(co2Data)) {
         showError("One dataset is invalid. Check console for details.");
         return;
       }
-      // Attempt merging
       mergeAndVisualize();
     }
 
-    // 3) Clean Crop Data
+    // Clean crop dataset
     function cleanCropData(raw) {
       // Crop CSV columns: index,Country,INDICATOR,SUBJECT,MEASURE,FREQUENCY,TIME,Value,Flag Codes
       // Use TIME as year, Value as production
-      // Filter for "United States"
       const filtered = raw.filter(d => d.Country && d.Country.includes("United States"));
       console.log("Filtered Crop Data (US):", filtered.length, "rows");
       return filtered.map(d => ({
@@ -116,11 +157,9 @@
       })).filter(d => !isNaN(d.year) && !isNaN(d.production));
     }
 
-    // 4) Clean CO₂ Data
+    // Clean CO₂ dataset
     function cleanCO2Data(raw) {
-      // CO₂ CSV columns: Country,Year,Savanna fires,Forest fires,...,total_emission,...
-      // Use total_emission as CO2
-      // Filter for "United States"
+      // CO₂ CSV columns: Country,Year,Savanna fires,...,total_emission,...
       const filtered = raw.filter(d => d.Country && d.Country.includes("United States"));
       console.log("Filtered CO2 Data (US):", filtered.length, "rows");
       return filtered.map(d => ({
@@ -130,7 +169,7 @@
       })).filter(d => !isNaN(d.year) && !isNaN(d.co2));
     }
 
-    // 5) Merge Datasets by year
+    // Merge Datasets by year
     function mergeAndVisualize() {
       const commonYears = findCommonYears(cropData, co2Data);
       console.log("Common Years:", commonYears);
@@ -144,16 +183,17 @@
         co2: co2Data.find(c => c.year === year).co2
       }));
       console.log("Merged Data:", mergedData);
-
       if (mergedData.length === 0) {
         showError("Merged data is empty. No overlapping years found.");
         return;
       }
       document.getElementById("loading").remove();
+
+      // Initialize slider
+      initSlider();
       initializeVisualization();
     }
 
-    // 6) Find Common Years
     function findCommonYears(crop, co2) {
       const cropYears = new Set(crop.map(d => d.year));
       return [...new Set(co2.map(d => d.year))]
@@ -161,8 +201,27 @@
         .sort((a, b) => a - b);
     }
 
-    // 7) Visualization
+    function initSlider() {
+      // Determine min & max year in mergedData
+      const minYear = d3.min(mergedData, d => d.year);
+      const maxYear = d3.max(mergedData, d => d.year);
+      yearSlider = document.getElementById("yearSlider");
+      yearSlider.min = minYear;
+      yearSlider.max = maxYear;
+      yearSlider.value = minYear;
+      document.getElementById("yearLabel").innerText = minYear;
+
+      yearSlider.oninput = function() {
+        document.getElementById("yearLabel").innerText = this.value;
+        updateChart(+this.value);
+      };
+    }
+
+    let filteredData = [];  // data after year filtering
+    let pointsGroup = null;
+
     function initializeVisualization() {
+      // Create scales
       xScale = d3.scaleLinear()
         .domain(d3.extent(mergedData, d => d.co2))
         .range([0, width])
@@ -173,45 +232,73 @@
         .range([height, 0])
         .nice();
 
+      // Color scale based on year
+      const [minY, maxY] = d3.extent(mergedData, d => d.year);
+      colorScale = d3.scaleSequential(d3.interpolateTurbo).domain([minY, maxY]);
+
+      // Zoom
       zoomBehavior = d3.zoom()
         .scaleExtent([1, 8])
-        .on('zoom', handleZoom);
+        .on("zoom", handleZoom);
 
-      d3.select('#chart').call(zoomBehavior);
+      d3.select("#chart").call(zoomBehavior);
 
-      drawPoints();
-      addTrendline();
+      // Add axes once
       addAxes();
+      // Create a group for data points
+      pointsGroup = svg.append("g").attr("class", "points-group");
+      // Now do initial chart update
+      updateChart(d3.min(mergedData, d => d.year));
     }
 
-    function drawPoints() {
-      svg.selectAll(".data-point")
-        .data(mergedData)
+    function updateChart(minYearSelected) {
+      // Filter data
+      filteredData = mergedData.filter(d => d.year >= minYearSelected);
+
+      // Remove old points
+      pointsGroup.selectAll(".data-point").remove();
+      svg.selectAll(".trendline").remove(); // remove old trendline
+
+      // Draw new points
+      pointsGroup.selectAll(".data-point")
+        .data(filteredData, d => d.year)
         .enter()
         .append("circle")
         .attr("class", "data-point")
         .attr("cx", d => xScale(d.co2))
         .attr("cy", d => yScale(d.production))
         .attr("r", 6)
-        .attr("fill", "#3498db")
+        .attr("fill", d => colorScale(d.year))
         .attr("stroke", "#fff")
         .attr("stroke-width", 1)
         .on("mouseover", showTooltip)
         .on("mouseout", hideTooltip);
+
+      // Recompute domain if you want dynamic axes based on filtered data
+      // (Commented out if you prefer fixed axes.)
+      // xScale.domain(d3.extent(filteredData, d => d.co2)).nice();
+      // yScale.domain(d3.extent(filteredData, d => d.production)).nice();
+      // svg.select(".x-axis").call(d3.axisBottom(xScale).tickFormat(...));
+      // svg.select(".y-axis").call(d3.axisLeft(yScale).tickFormat(...));
+
+      // Add updated trendline
+      addTrendline();
     }
 
     function addAxes() {
+      // X-axis
       svg.append("g")
         .attr("class", "x-axis")
         .attr("transform", `translate(0, ${height})`)
         .call(d3.axisBottom(xScale).tickFormat(d => `${(d/1e6).toFixed(1)}M t`));
 
       svg.append("text")
-        .attr("x", width/2)
+        .attr("x", width / 2)
         .attr("y", height + margin.bottom - 10)
         .style("text-anchor", "middle")
         .text("CO₂ Emissions (Million Metric Tons)");
 
+      // Y-axis
       svg.append("g")
         .attr("class", "y-axis")
         .call(d3.axisLeft(yScale).tickFormat(d => `${(d/1e3).toFixed(0)}k t`));
@@ -219,14 +306,15 @@
       svg.append("text")
         .attr("transform", "rotate(-90)")
         .attr("y", -margin.left + 20)
-        .attr("x", -height/2)
+        .attr("x", -height / 2)
         .style("text-anchor", "middle")
         .text("Crop Production (Thousand Tons)");
     }
 
     function addTrendline() {
-      const lr = linearRegression(mergedData);
-      const xExt = d3.extent(mergedData, d => d.co2);
+      if (filteredData.length < 2) return; // Need at least 2 points
+      const lr = linearRegression(filteredData);
+      const xExt = d3.extent(filteredData, d => d.co2);
       const trendData = xExt.map(xVal => ({
         x: xVal,
         y: lr.slope * xVal + lr.intercept
@@ -246,7 +334,7 @@
       const newX = event.transform.rescaleX(xScale);
       const newY = event.transform.rescaleY(yScale);
 
-      svg.selectAll(".data-point")
+      pointsGroup.selectAll(".data-point")
         .attr("cx", d => newX(d.co2))
         .attr("cy", d => newY(d.production));
 
@@ -254,38 +342,26 @@
       svg.select(".y-axis").call(d3.axisLeft(newY).tickFormat(d => `${(d/1e3).toFixed(0)}k t`));
     }
 
-    // Reset Zoom
     function resetZoom() {
       d3.select("#chart").transition()
         .duration(300)
         .call(zoomBehavior.transform, d3.zoomIdentity);
     }
 
-    // Tooltip handlers
     function showTooltip(event, d) {
       d3.select('#tooltip')
         .style('opacity', 1)
         .style('left', `${event.pageX + 15}px`)
         .style('top', `${event.pageY - 30}px`)
         .html(`
-          <div>Year: ${d.year}</div>
-          <div>CO₂: ${(d.co2/1e6).toFixed(1)}M t</div>
-          <div>Production: ${(d.production/1e3).toFixed(0)}k t</div>
+          <div><strong>Year:</strong> ${d.year}</div>
+          <div><strong>CO₂:</strong> ${(d.co2/1e6).toFixed(1)}M t</div>
+          <div><strong>Production:</strong> ${(d.production/1e3).toFixed(0)}k t</div>
         `);
     }
+
     function hideTooltip() {
       d3.select('#tooltip').style('opacity', 0);
-    }
-
-    // Show error message in #errorBox
-    function showError(msg) {
-      document.getElementById("errorBox").innerText = msg;
-    }
-
-    // If .catch triggers
-    function handleLoadingError(error) {
-      console.error("Data loading error:", error);
-      document.getElementById("errorBox").innerText = "⚠️ Error loading data. Please check your connection or CSV URLs.";
     }
 
     // Simple linear regression
@@ -301,6 +377,10 @@
       const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
       const intercept = (sumY - slope * sumX) / n;
       return { slope, intercept };
+    }
+
+    function showError(msg) {
+      document.getElementById("errorBox").innerText = msg;
     }
   </script>
 </body>
