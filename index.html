@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>CO₂ Emissions vs Crop Production (US)</title>
+  <title>Fertilizers Manufacturing vs Average Temperature (US)</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
     body {
@@ -23,7 +23,7 @@
       margin-right: 10px;
     }
     svg {
-      background: #ffffff;
+      background: #fff;
       border: 1px solid #ccc;
       box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
       margin: auto;
@@ -42,7 +42,7 @@
   </style>
 </head>
 <body>
-  <h1>CO₂ Emissions vs Crop Production (US)</h1>
+  <h1>Fertilizers Manufacturing vs Average Temperature (US)</h1>
   <div id="controls">
     <span id="sliderLabel">Minimum Year:</span>
     <input type="range" id="yearSlider" min="0" max="0" step="1">
@@ -52,133 +52,132 @@
   <div class="tooltip" id="tooltip"></div>
   
   <script>
-    // -----------------------------------------------------------------------
-    // 1) REPLACE THESE WITH YOUR ACTUAL CSV URLs
-    //    Make sure your Crop CSV has columns: Country,Year,Production
-    //    Make sure your CO2 CSV has columns: Country,Year,total_emission, ...
-    // -----------------------------------------------------------------------
-    const cropURL = "https://gist.githubusercontent.com/mystrycodes/3d3cf36c88a4f23a187cb4e12a835e10/raw/5aebb1fc334be000f4b756db6d5c83adf71e89ab/CropProduction.csv";
-    const co2URL  = "https://gist.githubusercontent.com/mystrycodes/f3e133db6c35f1f7180296e872441fe4/raw/4c5bc29c4c18f3510bead103c2188d5a919f066d/Co2emmission.csv";
+    // Dataset URLs:
+    // The US climate dataset (climate.csv) from:
+    // https://gist.githubusercontent.com/mystrycodes/0e4190865121859997eec1fc2d5b4dcd/raw/d10453ccf854feb48e10319eb8025a973f938abe/climate.csv
+    const climateURL = "https://gist.githubusercontent.com/mystrycodes/0e4190865121859997eec1fc2d5b4dcd/raw/d10453ccf854feb48e10319eb8025a973f938abe/climate.csv";
+    // The CO₂ emissions dataset from:
+    // https://gist.githubusercontent.com/mystrycodes/f3e133db6c35f1f7180296e872441fe4/raw/4c5bc29c4c18f3510bead103c2188d5a919f066d/Co2emmission.csv
+    // (This dataset contains many columns; we’ll use the "Fertilizers Manufacturing" column.)
+    const co2URL = "https://gist.githubusercontent.com/mystrycodes/f3e133db6c35f1f7180296e872441fe4/raw/4c5bc29c4c18f3510bead103c2188d5a919f066d/Co2emmission.csv";
 
-    // SVG and margins
+    // Set up SVG canvas and margins.
     const svg = d3.select("#chart"),
           margin = { top: 50, right: 70, bottom: 60, left: 80 },
-          width  = +svg.attr("width")  - margin.left - margin.right,
-          height = +svg.attr("height") - margin.top  - margin.bottom;
-
+          width = +svg.attr("width") - margin.left - margin.right,
+          height = +svg.attr("height") - margin.top - margin.bottom;
     const g = svg.append("g").attr("transform", `translate(${margin.left}, ${margin.top})`);
     const tooltip = d3.select("#tooltip");
 
-    // We'll store the merged data here
+    // Global variable to hold merged data
     let mergedData = [];
 
-    // Simple linear regression function
+    // A simple linear regression function using least-squares.
     function linearRegression(data) {
       const n = data.length;
       let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
       data.forEach(d => {
-        sumX  += d.CO2;
-        sumY  += d.Production;
-        sumXY += d.CO2 * d.Production;
-        sumXX += d.CO2 * d.CO2;
+        sumX  += d.FertManuf;
+        sumY  += d.avgTemp;
+        sumXY += d.FertManuf * d.avgTemp;
+        sumXX += d.FertManuf * d.FertManuf;
       });
       const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
       const intercept = (sumY - slope * sumX) / n;
       return { slope, intercept };
     }
 
-    // Load both CSV files concurrently
-    Promise.all([ d3.csv(cropURL), d3.csv(co2URL) ]).then(([cropData, co2Data]) => {
-      // -------------------
-      // 2) Process Crop Data
-      // -------------------
-      // We assume columns: Country, Year, Production
-      cropData.forEach(d => {
-        d.Year       = +d.Year;
-        d.Production = +d.Production;
+    // Aggregate climate data: Group by Year and compute average temperature.
+    function aggregateClimate(data) {
+      // The climate.csv has columns: Year, Month, Avg_Temp (°C), etc.
+      data.forEach(d => {
+        d.Year = +d.Year; 
+        d["Avg_Temp (°C)"] = +d["Avg_Temp (°C)"];
       });
-      // Filter for US only (make sure your CSV actually has "United States")
-      cropData = cropData.filter(d => d.Country === "United States");
-      // If multiple rows per year, sum them
-      const aggregatedCrop = Array.from(
-        d3.rollup(cropData, v => d3.sum(v, d => d.Production), d => d.Year),
-        ([Year, Production]) => ({ Year, Production })
+      return Array.from(
+        d3.rollup(data, v => d3.mean(v, d => d["Avg_Temp (°C)"]), d => d.Year),
+        ([Year, avgTemp]) => ({ Year: +Year, avgTemp })
       );
+    }
 
-      // -------------------
-      // 3) Process CO2 Data
-      // -------------------
-      // We assume columns: Country,Year,total_emission
-      co2Data.forEach(d => {
+    // Aggregate CO₂ data: Group by Year and compute average "Fertilizers Manufacturing" value.
+    function aggregateCO2(data) {
+      // The CO₂ dataset has columns including: Country,Year,Fertilizers Manufacturing,...
+      // First, filter for United States (adjust string if needed).
+      data = data.filter(d => d.Country === "United States");
+      data.forEach(d => {
         d.Year = +d.Year;
-        // Convert "total_emission" to numeric CO2
-        d.CO2  = +d.total_emission;
+        d.FertManuf = +d["Fertilizers Manufacturing"]; // parse the column value
       });
-      // Filter for US only
-      co2Data = co2Data.filter(d => d.Country === "United States");
-      // If multiple rows per year, average them
-      const aggregatedCO2 = Array.from(
-        d3.rollup(co2Data, v => d3.mean(v, d => d.CO2), d => d.Year),
-        ([Year, CO2]) => ({ Year, CO2 })
+      return Array.from(
+        d3.rollup(data, v => d3.mean(v, d => d.FertManuf), d => d.Year),
+        ([Year, fertManuf]) => ({ Year: +Year, FertManuf: fertManuf })
       );
+    }
 
-      // -------------------
-      // 4) Merge Datasets by Year
-      // -------------------
-      const merged = [];
-      aggregatedCrop.forEach(cd => {
-        const match = aggregatedCO2.find(co2 => co2.Year === cd.Year);
-        if (match) {
-          merged.push({
-            Year: cd.Year,
-            Production: cd.Production,
-            CO2: match.CO2
-          });
-        }
+    // Load both CSV files concurrently
+    Promise.all([ d3.csv(climateURL), d3.csv(co2URL) ])
+      .then(([climateData, co2Data]) => {
+        // Aggregate each dataset by year.
+        const aggregatedClimate = aggregateClimate(climateData);
+        const aggregatedCO2 = aggregateCO2(co2Data);
+        console.log("Aggregated Climate Data:", aggregatedClimate);
+        console.log("Aggregated CO₂ Data (Fertilizers Manufacturing):", aggregatedCO2);
+
+        // Merge the two aggregated datasets on Year.
+        let merged = [];
+        aggregatedClimate.forEach(cd => {
+          const match = aggregatedCO2.find(c => c.Year === cd.Year);
+          if (match) {
+            merged.push({
+              Year: cd.Year,
+              avgTemp: cd.avgTemp,
+              FertManuf: match.FertManuf
+            });
+          }
+        });
+        mergedData = merged.sort((a, b) => a.Year - b.Year);
+        console.log("Merged Data:", mergedData);
+
+        // Initialize the slider based on merged data's year range.
+        const minYear = d3.min(mergedData, d => d.Year);
+        const maxYear = d3.max(mergedData, d => d.Year);
+        const yearSlider = d3.select("#yearSlider")
+                             .attr("min", minYear)
+                             .attr("max", maxYear)
+                             .attr("value", minYear);
+        d3.select("#yearValue").text(minYear);
+
+        // Initial render
+        updateChart(minYear);
+
+        // Update chart when slider value changes.
+        yearSlider.on("input", function() {
+          const selectedYear = +this.value;
+          d3.select("#yearValue").text(selectedYear);
+          updateChart(selectedYear);
+        });
+      })
+      .catch(error => {
+        console.error("Error loading data:", error);
       });
-      mergedData = merged.sort((a, b) => a.Year - b.Year);
 
-      // -------------------
-      // 5) Initialize Slider
-      // -------------------
-      const minYear = d3.min(mergedData, d => d.Year);
-      const maxYear = d3.max(mergedData, d => d.Year);
-      const yearSlider = d3.select("#yearSlider")
-                           .attr("min", minYear)
-                           .attr("max", maxYear)
-                           .attr("value", minYear);
-      d3.select("#yearValue").text(minYear);
-
-      // First render
-      updateChart(minYear);
-
-      // Update chart on slider input
-      yearSlider.on("input", function() {
-        const selectedYear = +this.value;
-        d3.select("#yearValue").text(selectedYear);
-        updateChart(selectedYear);
-      });
-    })
-    .catch(err => {
-      console.error("Error loading data:", err);
-    });
-
-    // Create scales for scatter plot
+    // Create scales for the scatter plot.
     const xScale = d3.scaleLinear().range([0, width]);
     const yScale = d3.scaleLinear().range([height, 0]);
 
-    // Axes groups
+    // Append axes groups.
     const xAxisGroup = g.append("g").attr("transform", `translate(0, ${height})`);
     const yAxisGroup = g.append("g");
 
-    // Axis labels
+    // Axis labels.
     g.append("text")
      .attr("class", "x label")
      .attr("x", width / 2)
      .attr("y", height + 40)
      .attr("text-anchor", "middle")
      .attr("fill", "#333")
-     .text("CO₂ Emissions (total_emission units)");
+     .text("Fertilizers Manufacturing (units)");
 
     g.append("text")
      .attr("class", "y label")
@@ -187,86 +186,78 @@
      .attr("y", -60)
      .attr("text-anchor", "middle")
      .attr("fill", "#333")
-     .text("Crop Production (units)");
+     .text("Average Temperature (°C)");
 
-    // -------------------
-    // 6) Update Chart Function
-    // -------------------
+    // Function to update the chart based on the selected minimum year.
     function updateChart(minYearSelected) {
-      // Filter data for Year >= minYearSelected
       const filtered = mergedData.filter(d => d.Year >= minYearSelected);
 
-      // Update scale domains
-      xScale.domain(d3.extent(filtered, d => d.CO2)).nice();
-      yScale.domain(d3.extent(filtered, d => d.Production)).nice();
+      // Update scale domains.
+      xScale.domain(d3.extent(filtered, d => d.FertManuf)).nice();
+      yScale.domain(d3.extent(filtered, d => d.avgTemp)).nice();
 
-      // Update axes
+      // Update axes.
       xAxisGroup.transition().duration(750).call(d3.axisBottom(xScale));
       yAxisGroup.transition().duration(750).call(d3.axisLeft(yScale));
 
-      // Bind data to circles
+      // Bind data to circles.
       const circles = g.selectAll("circle").data(filtered, d => d.Year);
 
-      // Remove old circles
       circles.exit()
              .transition().duration(750)
              .attr("r", 0)
              .remove();
 
-      // Update existing circles
       circles.transition().duration(750)
-             .attr("cx", d => xScale(d.CO2))
-             .attr("cy", d => yScale(d.Production))
+             .attr("cx", d => xScale(d.FertManuf))
+             .attr("cy", d => yScale(d.avgTemp))
              .attr("r", 6)
              .attr("fill", "#1f77b4");
 
-      // Add new circles
       circles.enter().append("circle")
-             .attr("cx", d => xScale(d.CO2))
-             .attr("cy", d => yScale(d.Production))
+             .attr("cx", d => xScale(d.FertManuf))
+             .attr("cy", d => yScale(d.avgTemp))
              .attr("r", 0)
              .attr("fill", "#1f77b4")
              .attr("stroke", "#333")
              .attr("stroke-width", 1)
              .on("mouseover", (event, d) => {
-               // Enlarge circle on hover
                d3.select(event.currentTarget)
                  .transition().duration(200)
                  .attr("r", 9);
-               // Show tooltip
                tooltip.transition().duration(200).style("opacity", 0.9);
-               tooltip.html(`
-                 <strong>Year:</strong> ${d.Year}<br>
-                 <strong>CO₂:</strong> ${d.CO2.toFixed(1)}<br>
-                 <strong>Production:</strong> ${d.Production.toFixed(1)}
-               `)
-               .style("left", (event.pageX + 10) + "px")
-               .style("top",  (event.pageY - 28) + "px");
+               tooltip.html(`<strong>Year:</strong> ${d.Year}<br>
+                             <strong>Fertilizers Manufacturing:</strong> ${d.FertManuf.toFixed(1)}<br>
+                             <strong>Avg Temp:</strong> ${d.avgTemp.toFixed(1)}°C`)
+                      .style("left", (event.pageX + 10) + "px")
+                      .style("top", (event.pageY - 28) + "px");
              })
              .on("mouseout", function(event, d) {
-               d3.select(this).transition().duration(200).attr("r", 6);
+               d3.select(this)
+                 .transition().duration(200)
+                 .attr("r", 6);
                tooltip.transition().duration(500).style("opacity", 0);
              })
              .transition().duration(750)
              .attr("r", 6);
 
-      // Remove any existing trendline
+      // Remove any existing trendline.
       g.selectAll(".trendline").remove();
 
-      // If we have at least 2 data points, compute linear regression
+      // If we have at least 2 data points, compute and draw a linear regression trendline.
       if (filtered.length >= 2) {
         const lr = linearRegression(filtered);
-        const xVals = d3.extent(filtered, d => d.CO2);
-        const trendData = xVals.map(xVal => ({
+        const xExtent = d3.extent(filtered, d => d.FertManuf);
+        const trendPoints = xExtent.map(xVal => ({
           x: xVal,
           y: lr.slope * xVal + lr.intercept
         }));
         g.append("line")
          .attr("class", "trendline")
-         .attr("x1", xScale(trendData[0].x))
-         .attr("y1", yScale(trendData[0].y))
-         .attr("x2", xScale(trendData[1].x))
-         .attr("y2", yScale(trendData[1].y))
+         .attr("x1", xScale(trendPoints[0].x))
+         .attr("y1", yScale(trendPoints[0].y))
+         .attr("x2", xScale(trendPoints[1].x))
+         .attr("y2", yScale(trendPoints[1].y))
          .attr("stroke", "red")
          .attr("stroke-width", 2)
          .attr("stroke-dasharray", "4,4");
