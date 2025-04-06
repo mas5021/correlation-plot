@@ -5,64 +5,16 @@
   <title>US Agricultural Analysis: CO₂ vs Crop Production</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      background: #f8f9fa;
-      margin: 2rem;
-      text-align: center;
-    }
-    h1 {
-      color: #2c3e50;
-      margin-bottom: 0.5rem;
-    }
-    #dataInfo {
-      color: #7f8c8d;
-      margin-bottom: 1.5rem;
-    }
-    #chart {
-      background: white;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .tooltip {
-      position: absolute;
-      background: rgba(0,0,0,0.9);
-      color: white;
-      padding: 0.8rem;
-      border-radius: 4px;
-      pointer-events: none;
-      font-size: 0.9rem;
-      opacity: 0;
-      transition: opacity 0.2s;
-    }
-    .trendline {
-      stroke: #e74c3c;
-      stroke-width: 2;
-      stroke-dasharray: 4 2;
-    }
-    .data-point:hover {
-      stroke: #e67e22;
-      stroke-width: 2px;
-    }
-    .zoom-controls {
-      position: absolute;
-      top: 100px;
-      right: 20px;
-      background: white;
-      padding: 10px;
-      border-radius: 5px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    #loading {
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: white;
-      padding: 1rem 2rem;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
+    /* Previous CSS styles remain unchanged */
+    body { font-family: 'Segoe UI', sans-serif; background: #f8f9fa; margin: 2rem; text-align: center; }
+    h1 { color: #2c3e50; margin-bottom: 0.5rem; }
+    #dataInfo { color: #7f8c8d; margin-bottom: 1.5rem; }
+    #chart { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .tooltip { position: absolute; background: rgba(0,0,0,0.9); color: white; padding: 0.8rem; border-radius: 4px; pointer-events: none; font-size: 0.9rem; opacity: 0; transition: opacity 0.2s; }
+    .trendline { stroke: #e74c3c; stroke-width: 2; stroke-dasharray: 4 2; }
+    .data-point:hover { stroke: #e67e22; stroke-width: 2px; }
+    .zoom-controls { position: absolute; top: 100px; right: 20px; background: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 1rem 2rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
   </style>
 </head>
 <body>
@@ -76,6 +28,7 @@
   <div id="loading">Loading agricultural data...</div>
 
   <script>
+    // Corrected data URLs and column names
     const DATA_URLS = {
       crop: 'https://gist.githubusercontent.com/mystrycodes/3d3cf36c88a4f23a187cb4e12a835e10/raw/CropProduction.csv',
       co2: 'https://gist.githubusercontent.com/mystrycodes/f3e133db6c35f1f7180296e872441fe4/raw/Co2emmission.csv'
@@ -97,12 +50,12 @@
       .catch(handleLoadingError);
 
     function processDatasets([rawCrop, rawCO2]) {
-      const cropData = cleanDataset(rawCrop, 'Production');
-      const co2Data = cleanDataset(rawCO2, 'Annual CO₂ emissions');
+      const cropData = cleanDataset(rawCrop, 'Production', 'Country');
+      const co2Data = cleanDataset(rawCO2, 'Annual CO2 emissions', 'Entity');
       
       const commonYears = findCommonYears(cropData, co2Data);
       if (commonYears.length === 0) {
-        showErrorMessage('No overlapping data available');
+        showErrorMessage('No overlapping data available - check data sources');
         return;
       }
 
@@ -111,13 +64,14 @@
       d3.select('#loading').remove();
     }
 
-    function cleanDataset(data, valueField) {
+    // Updated cleanDataset function with proper column names
+    function cleanDataset(data, valueField, countryField) {
       return data
-        .filter(d => (d.Country === 'United States' || d.Entity === 'United States'))
+        .filter(d => d[countryField] === 'United States')
         .map(d => ({
           year: +d.Year,
           value: +d[valueField].replace(/,/g, ''),
-          country: d.Country || d.Entity
+          country: d[countryField]
         }))
         .filter(d => !isNaN(d.year) && !isNaN(d.value));
     }
@@ -137,6 +91,7 @@
       }));
     }
 
+    // Rest of the visualization code remains the same
     function initializeVisualization() {
       xScale = d3.scaleLinear()
         .domain(d3.extent(analysisData, d => d.co2))
