@@ -250,13 +250,15 @@
 
     // Initialize the visualization (axes, zoom, points)
     function initializeVisualization() {
-      // Create scales (no .nice() => domain won't be extended to 0)
+      // Create scales
       xScale = d3.scaleLinear()
         .domain(d3.extent(mergedData, d => d.co2))
         .range([0, width]);
 
+      // For yScale, filter out non-positive values so the domain doesn't extend to 0.
+      const productionValues = mergedData.map(d => d.production).filter(v => v > 0);
       yScale = d3.scaleLinear()
-        .domain(d3.extent(mergedData, d => d.production))
+        .domain([d3.min(productionValues), d3.max(mergedData, d => d.production)])
         .range([height, 0]);
 
       // Color scale based on year
@@ -323,11 +325,11 @@
         .style("text-anchor", "middle")
         .text("CO₂ Emissions (Gigatons)");
 
-      // Y-axis
+      // Y-axis: Use the actual production value with comma formatting.
       svg.append("g")
         .attr("class", "y-axis")
         .call(d3.axisLeft(yScale)
-          .tickFormat(d => `${(d/1e3).toFixed(0)}k t`)
+          .tickFormat(d3.format(",.0f"))
         );
 
       svg.append("text")
@@ -335,7 +337,7 @@
         .attr("y", -margin.left + 20)
         .attr("x", -height / 2)
         .style("text-anchor", "middle")
-        .text("Crop Production (Thousand Tons)");
+        .text("Crop Production (t)");
     }
 
     // Add a trendline to the chart
@@ -368,7 +370,7 @@
         .attr("cy", d => newY(d.production));
 
       svg.select(".x-axis").call(d3.axisBottom(newX).tickFormat(d => `${d.toFixed(2)} Gt`));
-      svg.select(".y-axis").call(d3.axisLeft(newY).tickFormat(d => `${(d/1e3).toFixed(0)}k t`));
+      svg.select(".y-axis").call(d3.axisLeft(newY).tickFormat(d3.format(",.0f")));
     }
 
     // Reset zoom to the default view
@@ -387,7 +389,7 @@
         .html(`
           <div><strong>Year:</strong> ${d.year}</div>
           <div><strong>CO₂:</strong> ${d.co2.toFixed(2)} Gt</div>
-          <div><strong>Production:</strong> ${(d.production/1e3).toFixed(0)}k t</div>
+          <div><strong>Production:</strong> ${d.production.toFixed(0)} t</div>
         `);
     }
 
