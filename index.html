@@ -250,16 +250,14 @@
 
     // Initialize the visualization (axes, zoom, points)
     function initializeVisualization() {
-      // Create scales
+      // Create scales (no .nice() => domain won't be extended to 0)
       xScale = d3.scaleLinear()
         .domain(d3.extent(mergedData, d => d.co2))
-        .range([0, width])
-        .nice();
+        .range([0, width]);
 
       yScale = d3.scaleLinear()
         .domain(d3.extent(mergedData, d => d.production))
-        .range([height, 0])
-        .nice();
+        .range([height, 0]);
 
       // Color scale based on year
       const [minY, maxY] = d3.extent(mergedData, d => d.year);
@@ -315,18 +313,22 @@
       svg.append("g")
         .attr("class", "x-axis")
         .attr("transform", `translate(0, ${height})`)
-        .call(d3.axisBottom(xScale).tickFormat(d => `${(d/1e6).toFixed(1)}M t`));
+        .call(d3.axisBottom(xScale)
+          .tickFormat(d => `${d.toFixed(2)} Gt`)
+        );
 
       svg.append("text")
         .attr("x", width / 2)
         .attr("y", height + margin.bottom - 10)
         .style("text-anchor", "middle")
-        .text("CO₂ Emissions (Million Metric Tons)");
+        .text("CO₂ Emissions (Gigatons)");
 
       // Y-axis
       svg.append("g")
         .attr("class", "y-axis")
-        .call(d3.axisLeft(yScale).tickFormat(d => `${(d/1e3).toFixed(0)}k t`));
+        .call(d3.axisLeft(yScale)
+          .tickFormat(d => `${(d/1e3).toFixed(0)}k t`)
+        );
 
       svg.append("text")
         .attr("transform", "rotate(-90)")
@@ -365,7 +367,7 @@
         .attr("cx", d => newX(d.co2))
         .attr("cy", d => newY(d.production));
 
-      svg.select(".x-axis").call(d3.axisBottom(newX).tickFormat(d => `${(d/1e6).toFixed(1)}M t`));
+      svg.select(".x-axis").call(d3.axisBottom(newX).tickFormat(d => `${d.toFixed(2)} Gt`));
       svg.select(".y-axis").call(d3.axisLeft(newY).tickFormat(d => `${(d/1e3).toFixed(0)}k t`));
     }
 
@@ -384,7 +386,7 @@
         .style('top', `${event.pageY - 30}px`)
         .html(`
           <div><strong>Year:</strong> ${d.year}</div>
-          <div><strong>CO₂:</strong> ${(d.co2/1e6).toFixed(1)}M t</div>
+          <div><strong>CO₂:</strong> ${d.co2.toFixed(2)} Gt</div>
           <div><strong>Production:</strong> ${(d.production/1e3).toFixed(0)}k t</div>
         `);
     }
@@ -413,11 +415,11 @@
       const displayDiv = document.getElementById("data-display");
       let html = '<h2>Merged Data Values</h2>';
       html += '<table>';
-      html += '<tr><th>Year</th><th>CO₂ Emissions (t)</th><th>Crop Production (t)</th></tr>';
+      html += '<tr><th>Year</th><th>CO₂ Emissions (Gt)</th><th>Crop Production (t)</th></tr>';
       mergedData.forEach(d => {
         html += `<tr>
                    <td>${d.year}</td>
-                   <td>${d.co2}</td>
+                   <td>${d.co2.toFixed(2)}</td>
                    <td>${d.production}</td>
                  </tr>`;
       });
