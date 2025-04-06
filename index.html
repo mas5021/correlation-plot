@@ -2,232 +2,222 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>US Agricultural Analysis: CO₂ vs Crop Production</title>
+  <title>Avg Temperature vs Total Crop Production (US)</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
-    body { 
-      font-family: 'Segoe UI', sans-serif; 
-      background: #f8f9fa; 
-      margin: 2rem; 
-      text-align: center; 
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f8f9fa;
+      margin: 2rem;
+      text-align: center;
     }
-    h1 { color: #2c3e50; margin-bottom: 0.5rem; }
-    #dataInfo { color: #7f8c8d; margin-bottom: 1.5rem; }
-    #chart { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    h1 { color: #2c3e50; }
+    .chart-container { width: 900px; margin: auto; }
+    svg { background: white; border: 1px solid #ccc; border-radius: 8px; }
     .tooltip { 
-      position: absolute; background: rgba(0,0,0,0.9); 
-      color: white; padding: 0.8rem; border-radius: 4px; 
-      pointer-events: none; font-size: 0.9rem; opacity: 0; transition: opacity 0.2s; 
+      position: absolute; 
+      background: rgba(0,0,0,0.9); 
+      color: white; 
+      padding: 0.8rem; 
+      border-radius: 4px; 
+      pointer-events: none; 
+      font-size: 0.9rem; 
+      opacity: 0; 
+      transition: opacity 0.2s; 
     }
-    .trendline { stroke: #e74c3c; stroke-width: 2; stroke-dasharray: 4 2; }
-    .data-point:hover { stroke: #e67e22; stroke-width: 2px; }
-    .zoom-controls { position: absolute; top: 100px; right: 20px; background: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 1rem 2rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
   </style>
 </head>
 <body>
-  <h1>US Agricultural Analysis: CO₂ vs Crop Production</h1>
-  <div id="dataInfo"></div>
-  <div class="zoom-controls">
-    <button onclick="resetZoom()">Reset Zoom</button>
+  <h1>Average Temperature vs Total Crop Production (US)</h1>
+  <div class="chart-container">
+    <svg id="chart" width="900" height="600"></svg>
   </div>
-  <svg id="chart" width="1000" height="600"></svg>
   <div id="tooltip" class="tooltip"></div>
-  <div id="loading">Loading agricultural data...</div>
-
+  
   <script>
-    // Replace with your actual CSV URLs if needed.
-    const DATA_URLS = {
-      crop: 'https://gist.githubusercontent.com/mystrycodes/3d3cf36c88a4f23a187cb4e12a835e10/raw/CropProduction.csv',
-      co2: 'https://gist.githubusercontent.com/mystrycodes/f3e133db6c35f1f7180296e872441fe4/raw/Co2emmission.csv'
-    };
+    // Define the dataset URLs.
+    const cropUrl = "https://gist.githubusercontent.com/mystrycodes/3d3cf36c88a4f23a187cb4e12a835e10/raw/5aebb1fc334be000f4b756db6d5c83adf71e89ab/CropProduction.csv";
+    const climateUrl = "https://gist.githubusercontent.com/mystrycodes/0e4190865121859997eec1fc2d5b4dcd/raw/d10453ccf854feb48e10319eb8025a973f938abe/climate.csv";
 
-    const margin = { top: 60, right: 80, bottom: 90, left: 100 };
-    const width = 1000 - margin.left - margin.right;
-    const height = 600 - margin.top - margin.bottom;
-    
-    // Append a group container to the SVG.
-    const svg = d3.select('#chart')
-      .append('g')
-      .attr('transform', `translate(${margin.left}, ${margin.top})`);
+    // Set margins and dimensions.
+    const margin = { top: 60, right: 60, bottom: 80, left: 80 },
+          width = 900 - margin.left - margin.right,
+          height = 600 - margin.top - margin.bottom;
 
-    let xScale, yScale, zoomBehavior;
-    let analysisData = [];  // Merged dataset
+    // Create the SVG container.
+    const svg = d3.select("#chart")
+                  .append("g")
+                  .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    // Load both CSV files concurrently.
-    Promise.all([d3.csv(DATA_URLS.crop), d3.csv(DATA_URLS.co2)])
-      .then(processDatasets)
-      .catch(handleLoadingError);
+    const tooltip = d3.select("#tooltip");
 
-    // Process datasets: clean, filter, and merge.
-    function processDatasets([rawCrop, rawCO2]) {
-      // Clean crop dataset.
-      const cropData = cleanDataset(rawCrop, 'Production', 'Country', 'SUBJECT');
-      // Clean CO₂ dataset.
-      const co2Data = cleanDataset(rawCO2, 'Annual CO2 emissions', 'Entity', null);
-      
-      // Find common years.
-      const commonYears = findCommonYears(cropData, co2Data);
-      console.log("Common Years:", commonYears);
-      if (commonYears.length === 0) {
-        showErrorMessage('No overlapping data available - check data sources');
-        return;
-      }
-      
-      // Merge datasets.
-      analysisData = mergeDatasets(cropData, co2Data, commonYears);
-      console.log("Merged Data:", analysisData);
-      initializeVisualization();
-      d3.select('#loading').remove();
-    }
+    // Global variables for merged data.
+    let mergedData = [];
 
-    // Clean dataset function.
-    // If crop dataset, countryField is "Country", valueField is "Production", and cropField is "SUBJECT".
-    // For CO₂ dataset, countryField is "Entity" and valueField is "Annual CO2 emissions".
-    function cleanDataset(data, valueField, countryField, cropField) {
-      return data
-        .filter(d => d[countryField] && d[countryField].includes("United States"))
-        .map(d => ({
-          year: +d.Year || +d.TIME,  // Use "Year" if exists; otherwise, use "TIME"
-          value: +d[valueField].replace(/,/g, ''),
-          country: d[countryField],
-          crop: cropField ? d[cropField] : null
-        }))
-        .filter(d => !isNaN(d.year) && !isNaN(d.value));
-    }
+    // Load both datasets concurrently.
+    Promise.all([d3.csv(cropUrl), d3.csv(climateUrl)])
+      .then(function([cropRaw, climateRaw]) {
+        // --- Process Crop Data ---
+        // Crop CSV columns: index,Country,INDICATOR,SUBJECT,MEASURE,FREQUENCY,TIME,Value,Flag Codes
+        // Use TIME as year, Value as production.
+        cropRaw.forEach(d => {
+          // Use TIME field as the year.
+          d.year = +d.TIME;
+          d.production = +d.Value;
+          // Use SUBJECT as crop type (not used in aggregation below).
+        });
+        // Filter crop data to only include records for US.
+        const cropUSA = cropRaw.filter(d => d.Country && d.Country.includes("United States") && !isNaN(d.year) && !isNaN(d.production));
+        // Aggregate crop data by year (sum production over all crops).
+        const cropByYear = Array.from(
+          d3.rollup(cropUSA, v => d3.sum(v, d => d.production), d => d.year),
+          ([year, totalProduction]) => ({ year, totalProduction })
+        );
+        cropByYear.sort((a, b) => a.year - b.year);
+        console.log("Aggregated Crop Data:", cropByYear);
 
-    function findCommonYears(crop, co2) {
-      const cropYears = new Set(crop.map(d => d.year));
-      return [...new Set(co2.map(d => d.year))]
-        .filter(year => cropYears.has(year))
-        .sort((a, b) => a - b);
-    }
+        // --- Process Climate Data ---
+        // Climate CSV columns: Year,Month,Avg_Temp (°C),Max_Temp (°C),Min_Temp (°C),...
+        // For each row, convert Year and Avg_Temp (°C) to numbers.
+        climateRaw.forEach(d => {
+          // If Year is like "2020.0", take floor.
+          d.year = Math.floor(+d.Year);
+          d.avgTemp = +d["Avg_Temp (°C)"];
+        });
+        // Filter out any rows with invalid data.
+        const climateUSA = climateRaw.filter(d => !isNaN(d.year) && !isNaN(d.avgTemp));
+        // Group climate data by year (average the monthly average temperatures).
+        const climateByYear = Array.from(
+          d3.rollup(climateUSA, v => d3.mean(v, d => d.avgTemp), d => d.year),
+          ([year, avgTemp]) => ({ year, avgTemp })
+        );
+        climateByYear.sort((a, b) => a.year - b.year);
+        console.log("Aggregated Climate Data:", climateByYear);
 
-    // Merge datasets by year.
-    function mergeDatasets(crop, co2, years) {
-      return years.map(year => ({
-        year,
-        production: crop.find(d => d.year === year).value,
-        co2: co2.find(d => d.year === year).value
+        // --- Merge Datasets ---
+        // Only keep years that appear in both.
+        mergedData = cropByYear.map(d => {
+          const climateEntry = climateByYear.find(c => c.year === d.year);
+          return climateEntry ? { year: d.year, production: d.totalProduction, avgTemp: climateEntry.avgTemp } : null;
+        }).filter(d => d !== null);
+        console.log("Merged Data:", mergedData);
+
+        // If no overlapping years, show error.
+        if (mergedData.length === 0) {
+          tooltip.style("opacity", 1).html("No overlapping years found between datasets.");
+          return;
+        }
+
+        // Draw the scatter plot.
+        drawChart();
+      })
+      .catch(function(error) {
+        console.error("Error loading data:", error);
+        tooltip.style("opacity", 1).html("Error loading data. Please check your connection.");
+      });
+
+    function drawChart() {
+      // Create scales.
+      const xScale = d3.scaleLinear()
+                       .domain(d3.extent(mergedData, d => d.avgTemp))
+                       .range([0, width])
+                       .nice();
+
+      const yScale = d3.scaleLinear()
+                       .domain(d3.extent(mergedData, d => d.production))
+                       .range([height, 0])
+                       .nice();
+
+      // Create axes.
+      const xAxis = d3.axisBottom(xScale).tickFormat(d => `${d.toFixed(1)}°C`);
+      const yAxis = d3.axisLeft(yScale).tickFormat(d => `${(d/1e3).toFixed(0)}k t`);
+
+      // Append x-axis.
+      svg.append("g")
+         .attr("class", "x-axis")
+         .attr("transform", `translate(0, ${height})`)
+         .call(xAxis)
+         .append("text")
+         .attr("x", width / 2)
+         .attr("y", 40)
+         .attr("fill", "#333")
+         .style("text-anchor", "middle")
+         .text("Average Temperature (°C)");
+
+      // Append y-axis.
+      svg.append("g")
+         .attr("class", "y-axis")
+         .call(yAxis)
+         .append("text")
+         .attr("transform", "rotate(-90)")
+         .attr("x", -height/2)
+         .attr("y", -50)
+         .attr("fill", "#333")
+         .style("text-anchor", "middle")
+         .text("Total Crop Production (Thousand Tons)");
+
+      // Add data points.
+      svg.selectAll(".data-point")
+         .data(mergedData)
+         .enter()
+         .append("circle")
+         .attr("class", "data-point")
+         .attr("cx", d => xScale(d.avgTemp))
+         .attr("cy", d => yScale(d.production))
+         .attr("r", 6)
+         .attr("fill", "#3498db")
+         .attr("stroke", "#fff")
+         .attr("stroke-width", 1)
+         .on("mouseover", (event, d) => {
+            d3.select(event.currentTarget).attr("r", 9);
+            tooltip.style("opacity", 1)
+                   .style("left", (event.pageX + 10) + "px")
+                   .style("top", (event.pageY - 30) + "px")
+                   .html(`
+                     <strong>Year:</strong> ${d.year}<br>
+                     <strong>Avg Temp:</strong> ${d.avgTemp.toFixed(1)}°C<br>
+                     <strong>Total Production:</strong> ${(d.production/1e3).toFixed(0)}k t
+                   `);
+         })
+         .on("mouseout", function(event, d) {
+            d3.select(this).attr("r", 6);
+            tooltip.style("opacity", 0);
+         });
+
+      // Compute linear regression (simple least-squares).
+      const lr = linearRegression(mergedData);
+      // Define trendline endpoints.
+      const xDomain = xScale.domain();
+      const trendData = xDomain.map(xVal => ({
+        x: xVal,
+        y: lr.slope * xVal + lr.intercept
       }));
+
+      // Add trendline.
+      svg.append("line")
+         .attr("class", "trendline")
+         .attr("x1", xScale(trendData[0].x))
+         .attr("y1", yScale(trendData[0].y))
+         .attr("x2", xScale(trendData[1].x))
+         .attr("y2", yScale(trendData[1].y))
+         .attr("stroke", "#e74c3c")
+         .attr("stroke-width", 2)
+         .attr("stroke-dasharray", "4,2");
     }
 
-    function initializeVisualization() {
-      xScale = d3.scaleLinear()
-        .domain(d3.extent(analysisData, d => d.co2))
-        .range([0, width])
-        .nice();
-
-      yScale = d3.scaleLinear()
-        .domain(d3.extent(analysisData, d => d.production))
-        .range([height, 0])
-        .nice();
-
-      zoomBehavior = d3.zoom()
-        .scaleExtent([1, 8])
-        .on('zoom', handleZoom);
-
-      d3.select('#chart').call(zoomBehavior);
-      drawBaseVisualization();
-      addTrendline();
-      addAxes();
-    }
-
-    function drawBaseVisualization() {
-      svg.selectAll('.data-point')
-        .data(analysisData)
-        .enter()
-        .append('circle')
-        .attr('class', 'data-point')
-        .attr('cx', d => xScale(d.co2))
-        .attr('cy', d => yScale(d.production))
-        .attr('r', 6)
-        .attr('fill', '#3498db')
-        .attr('stroke', '#fff')
-        .attr('stroke-width', 1)
-        .on('mouseover', showTooltip)
-        .on('mouseout', hideTooltip);
-    }
-
-    function addAxes() {
-      svg.append('g')
-        .attr('class', 'x-axis')
-        .attr('transform', `translate(0, ${height})`)
-        .call(d3.axisBottom(xScale).tickFormat(d => `${d/1e6}M t`));
-
-      svg.append('text')
-        .attr('x', width/2)
-        .attr('y', height + margin.bottom - 10)
-        .style('text-anchor', 'middle')
-        .text('CO₂ Emissions (Million Metric Tons)');
-
-      svg.append('g')
-        .attr('class', 'y-axis')
-        .call(d3.axisLeft(yScale).tickFormat(d => `${d/1e3}k t`));
-
-      svg.append('text')
-        .attr('transform', 'rotate(-90)')
-        .attr('y', -margin.left + 20)
-        .attr('x', -height/2)
-        .style('text-anchor', 'middle')
-        .text('Crop Production (Thousand Tons)');
-    }
-
-    function addTrendline() {
-      // Use d3.regressionLinear if available; otherwise, compute simple regression.
-      const regression = d3.regressionLinear()
-                           .x(d => d.co2)
-                           .y(d => d.production)
-                           (analysisData);
-
-      svg.append('path')
-        .datum(regression)
-        .attr('class', 'trendline')
-        .attr('d', d3.line()([regression[0], regression[1]]));
-    }
-
-    function handleZoom(event) {
-      const newX = event.transform.rescaleX(xScale);
-      const newY = event.transform.rescaleY(yScale);
-
-      svg.selectAll('.data-point')
-        .attr('cx', d => newX(d.co2))
-        .attr('cy', d => newY(d.production));
-
-      svg.select('.x-axis').call(d3.axisBottom(newX));
-      svg.select('.y-axis').call(d3.axisLeft(newY));
-    }
-
-    function resetZoom() {
-      d3.select('#chart').transition()
-        .duration(300)
-        .call(zoomBehavior.transform, d3.zoomIdentity);
-    }
-
-    function showTooltip(event, d) {
-      d3.select('#tooltip')
-        .style('opacity', 1)
-        .style('left', `${event.pageX + 15}px`)
-        .style('top', `${event.pageY - 30}px`)
-        .html(`
-          <div>Year: ${d.year}</div>
-          <div>CO₂: ${(d.co2/1e6).toFixed(1)}M t</div>
-          <div>Production: ${(d.production/1e3).toFixed(0)}k t</div>
-        `);
-    }
-
-    function hideTooltip() {
-      d3.select('#tooltip').style('opacity', 0);
-    }
-
-    function handleLoadingError(error) {
-      console.error('Data loading error:', error);
-      d3.select('#loading')
-        .html('<div class="error">⚠️ Error loading data. Please check your connection</div>');
-    }
-
-    function showErrorMessage(message) {
-      d3.select('#loading').html(`<div class="error">⚠️ ${message}</div>`);
+    // Simple linear regression function.
+    function linearRegression(data) {
+      const n = data.length;
+      let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+      data.forEach(d => {
+        sumX += d.avgTemp;
+        sumY += d.production;
+        sumXY += d.avgTemp * d.production;
+        sumXX += d.avgTemp * d.avgTemp;
+      });
+      const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+      const intercept = (sumY - slope * sumX) / n;
+      return { slope, intercept };
     }
   </script>
 </body>
