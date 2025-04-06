@@ -169,7 +169,6 @@
 
     // Clean crop dataset
     function cleanCropData(raw) {
-      // Crop CSV columns: index,Country,INDICATOR,SUBJECT,MEASURE,FREQUENCY,TIME,Value,Flag Codes
       // Filter for US data and map required fields
       const filtered = raw.filter(d => d.Country && d.Country.includes("United States"));
       console.log("Filtered Crop Data (US):", filtered.length, "rows");
@@ -182,7 +181,6 @@
 
     // Clean CO₂ dataset
     function cleanCO2Data(raw) {
-      // CO₂ CSV columns: Country,Year,Savanna fires,...,total_emission,...
       // Filter for US data and map required fields
       const filtered = raw.filter(d => d.Country && d.Country.includes("United States"));
       console.log("Filtered CO2 Data (US):", filtered.length, "rows");
@@ -255,10 +253,11 @@
         .domain(d3.extent(mergedData, d => d.co2))
         .range([0, width]);
 
-      // For yScale, filter out non-positive production values so the domain doesn't extend to 0.
-      const productionValues = mergedData.map(d => d.production).filter(v => v > 0);
+      // Multiply production values by 100 for better variation.
+      // Set yScale domain based on production*100.
+      const productionValues = mergedData.map(d => d.production * 100).filter(v => v > 0);
       yScale = d3.scaleLinear()
-        .domain([d3.min(productionValues), d3.max(mergedData, d => d.production)])
+        .domain([d3.min(productionValues), d3.max(mergedData, d => d.production) * 100])
         .range([height, 0]);
 
       // Color scale based on year
@@ -290,14 +289,14 @@
       pointsGroup.selectAll(".data-point").remove();
       svg.selectAll(".trendline").remove();
 
-      // Draw new points
+      // Draw new points (note: production is multiplied by 100 for plotting)
       pointsGroup.selectAll(".data-point")
         .data(filteredData, d => d.year)
         .enter()
         .append("circle")
         .attr("class", "data-point")
         .attr("cx", d => xScale(d.co2))
-        .attr("cy", d => yScale(d.production))
+        .attr("cy", d => yScale(d.production * 100))
         .attr("r", 6)
         .attr("fill", d => colorScale(d.year))
         .attr("stroke", "#fff")
@@ -311,7 +310,7 @@
 
     // Add X and Y axes
     function addAxes() {
-      // X-axis
+      // X-axis (CO₂ remains unchanged)
       svg.append("g")
         .attr("class", "x-axis")
         .attr("transform", `translate(0, ${height})`)
@@ -325,11 +324,16 @@
         .style("text-anchor", "middle")
         .text("CO₂ Emissions (Gigatons)");
 
-      // Y-axis: use a fixed 5 ticks and comma formatting without dividing by 1000.
+      // Y-axis: production * 100, with tick interval of 50.
+      // We generate custom ticks with a step of 50.
+      const yDomain = yScale.domain();
+      const tickStep = 50;
+      const ticks = d3.range(Math.ceil(yDomain[0] / tickStep) * tickStep, yDomain[1] + tickStep, tickStep);
+
       svg.append("g")
         .attr("class", "y-axis")
         .call(d3.axisLeft(yScale)
-          .ticks(5)
+          .tickValues(ticks)
           .tickFormat(d3.format(",.0f"))
         );
 
@@ -338,7 +342,7 @@
         .attr("y", -margin.left + 20)
         .attr("x", -height / 2)
         .style("text-anchor", "middle")
-        .text("Crop Production (t)");
+        .text("Crop Production (t) x 100");
     }
 
     // Add a trendline to the chart
@@ -346,6 +350,7 @@
       if (filteredData.length < 2) return;
       const lr = linearRegression(filteredData);
       const xExt = d3.extent(filteredData, d => d.co2);
+      // Compute trendline values based on production * 100.
       const trendData = xExt.map(xVal => ({
         x: xVal,
         y: lr.slope * xVal + lr.intercept
@@ -353,9 +358,9 @@
       svg.append("line")
         .attr("class", "trendline")
         .attr("x1", xScale(trendData[0].x))
-        .attr("y1", yScale(trendData[0].y))
+        .attr("y1", yScale(trendData[0].y * 100))
         .attr("x2", xScale(trendData[1].x))
-        .attr("y2", yScale(trendData[1].y))
+        .attr("y2", yScale(trendData[1].y * 100))
         .attr("stroke", "#e74c3c")
         .attr("stroke-width", 2)
         .attr("stroke-dasharray", "4,2");
@@ -368,10 +373,17 @@
 
       pointsGroup.selectAll(".data-point")
         .attr("cx", d => newX(d.co2))
-        .attr("cy", d => newY(d.production));
+        .attr("cy", d => newY(d.production * 100));
 
       svg.select(".x-axis").call(d3.axisBottom(newX).tickFormat(d => `${d.toFixed(2)} Gt`));
-      svg.select(".y-axis").call(d3.axisLeft(newY).tickFormat(d3.format(",.0f")));
+      // For the y-axis, reapply the custom tick values.
+      const yDomain = newY.domain();
+      const tickStep = 50;
+      const ticks = d3.range(Math.ceil(yDomain[0] / tickStep) * tickStep, yDomain[1] + tickStep, tickStep);
+      svg.select(".y-axis").call(d3.axisLeft(newY)
+                                  .tickValues(ticks)
+                                  .tickFormat(d3.format(",.0f"))
+                                 );
     }
 
     // Reset zoom to the default view
@@ -381,7 +393,7 @@
         .call(zoomBehavior.transform, d3.zoomIdentity);
     }
 
-    // Tooltip functions
+    // Tooltip functions – display original (unscaled) production value
     function showTooltip(event, d) {
       d3.select('#tooltip')
         .style('opacity', 1)
@@ -398,7 +410,7 @@
       d3.select('#tooltip').style('opacity', 0);
     }
 
-    // Simple linear regression calculation
+    // Simple linear regression calculation (using original production values)
     function linearRegression(data) {
       const n = data.length;
       let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
