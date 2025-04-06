@@ -2,211 +2,265 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>US Agricultural Analysis: CO₂ vs Crop Production</title>
+  <title>US Crop Yield vs. Solar Irradiance</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
-    /* Previous CSS styles remain unchanged */
-    body { font-family: 'Segoe UI', sans-serif; background: #f8f9fa; margin: 2rem; text-align: center; }
-    h1 { color: #2c3e50; margin-bottom: 0.5rem; }
-    #dataInfo { color: #7f8c8d; margin-bottom: 1.5rem; }
-    #chart { background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    .tooltip { position: absolute; background: rgba(0,0,0,0.9); color: white; padding: 0.8rem; border-radius: 4px; pointer-events: none; font-size: 0.9rem; opacity: 0; transition: opacity 0.2s; }
-    .trendline { stroke: #e74c3c; stroke-width: 2; stroke-dasharray: 4 2; }
-    .data-point:hover { stroke: #e67e22; stroke-width: 2px; }
-    .zoom-controls { position: absolute; top: 100px; right: 20px; background: white; padding: 10px; border-radius: 5px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 1rem 2rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f8f9fa;
+      margin: 2rem;
+      text-align: center;
+    }
+    h1 { color: #2c3e50; }
+    p { color: #7f8c8d; }
+    #dropdown { margin-bottom: 20px; }
+    .chart-container { width: 800px; margin: auto; }
+    svg { border: 1px solid #ccc; }
+    .tooltip { 
+      position: absolute; background: rgba(0,0,0,0.8); color: white; padding: 0.5rem;
+      border-radius: 4px; pointer-events: none; font-size: 0.9rem; opacity: 0; 
+    }
   </style>
 </head>
 <body>
-  <h1>US Agricultural Analysis: CO₂ vs Crop Production</h1>
-  <div id="dataInfo"></div>
-  <div class="zoom-controls">
-    <button onclick="resetZoom()">Reset Zoom</button>
+  <h1>US Crop Yield vs. Solar Irradiance</h1>
+  <p>Interactive Dual-Axis Chart for a Selected Crop</p>
+  <div id="dropdown">
+    <label for="cropSelect">Select Crop: </label>
+    <select id="cropSelect"></select>
   </div>
-  <svg id="chart" width="1000" height="600"></svg>
+  <div class="chart-container">
+    <svg id="chart" width="800" height="500"></svg>
+  </div>
   <div id="tooltip" class="tooltip"></div>
-  <div id="loading">Loading agricultural data...</div>
-
+  
   <script>
-    // Corrected data URLs and column names
-    const DATA_URLS = {
-      crop: 'https://gist.githubusercontent.com/mystrycodes/3d3cf36c88a4f23a187cb4e12a835e10/raw/CropProduction.csv',
-      co2: 'https://gist.githubusercontent.com/mystrycodes/f3e133db6c35f1f7180296e872441fe4/raw/Co2emmission.csv'
-    };
+    // Define dataset URLs.
+    const cropUrl = "https://gist.githubusercontent.com/mystrycodes/3d3cf36c88a4f23a187cb4e12a835e10/raw/5aebb1fc334be000f4b756db6d5c83adf71e89ab/CropProduction.csv";
+    const climateUrl = "https://gist.githubusercontent.com/mystrycodes/0e4190865121859997eec1fc2d5b4dcd/raw/d10453ccf854feb48e10319eb8025a973f938abe/climate.csv";
 
-    const margin = { top: 60, right: 80, bottom: 90, left: 100 };
-    const width = 1000 - margin.left - margin.right;
-    const height = 600 - margin.top - margin.bottom;
+    // Set margins and dimensions.
+    const margin = { top: 60, right: 60, bottom: 60, left: 60 },
+          width = 800 - margin.left - margin.right,
+          height = 500 - margin.top - margin.bottom;
+
+    // Create the SVG and a group container for chart elements.
+    const svg = d3.select("#chart")
+                  .append("g")
+                  .attr("class", "gChart")
+                  .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const tooltip = d3.select("#tooltip");
+
+    // Global variables to store processed data.
+    let cropDataGrouped;    // Map: Crop => Array of {Year, Production}
+    let climateDataGrouped; // Array of {Year, Solar}
     
-    const svg = d3.select('#chart')
-      .append('g')
-      .attr('transform', `translate(${margin.left}, ${margin.top})`);
+    // Load both datasets concurrently.
+    Promise.all([ d3.csv(cropUrl), d3.csv(climateUrl) ])
+      .then(function([cropRaw, climateRaw]) {
+        // --------------------------
+        // PROCESS CROP PRODUCTION DATA:
+        // --------------------------
+        // Crop CSV columns: index, Country, INDICATOR, SUBJECT, MEASURE, FREQUENCY, TIME, Value, Flag Codes
+        cropRaw.forEach(d => {
+          // Use TIME field as year if Year is not present.
+          d.Year = d.Year ? +d.Year : +d.TIME;
+          d.Production = +d.Value;
+          d.Crop = d.SUBJECT;
+        });
+        // Filter crop data for US – allow if Country contains "United States"
+        const cropUSA = cropRaw.filter(d => d.Country && d.Country.includes("United States") && !isNaN(d.Year) && !isNaN(d.Production));
+        console.log("Crop USA Data:", cropUSA);
 
-    let xScale, yScale, zoomBehavior;
-    let analysisData = [];
+        // Group crop data by Crop.
+        cropDataGrouped = d3.group(cropUSA, d => d.Crop);
+        // For each crop, group by Year and compute average Production.
+        cropDataGrouped.forEach((values, cropName) => {
+          const groupedByYear = d3.rollup(values, v => d3.mean(v, d => d.Production), d => d.Year);
+          const arr = Array.from(groupedByYear, ([Year, Production]) => ({ Year, Production }));
+          arr.sort((a, b) => a.Year - b.Year);
+          cropDataGrouped.set(cropName, arr);
+        });
+        console.log("Grouped Crop Data:", cropDataGrouped);
 
-    Promise.all([d3.csv(DATA_URLS.crop), d3.csv(DATA_URLS.co2)])
-      .then(processDatasets)
-      .catch(handleLoadingError);
+        // --------------------------
+        // PROCESS CLIMATE DATA:
+        // --------------------------
+        // Climate CSV columns: Year, Month, Avg_Temp (°C), Max_Temp (°C), ..., Solar_Irradiance (W/m²), ...
+        climateRaw.forEach(d => {
+          d.Year = Math.floor(+d.Year); // ensure integer year
+          d.Solar = +d["Solar_Irradiance (W/m²)"];
+        });
+        // Filter climate data for US (should be all US-based)
+        const climateUSA = climateRaw.filter(d => d.Country && d.Country.includes("United States") && !isNaN(d.Year) && !isNaN(d.Solar));
+        // Group by Year: average Solar Irradiance.
+        const climateByYear = d3.rollup(climateUSA, v => d3.mean(v, d => d.Solar), d => d.Year);
+        climateDataGrouped = Array.from(climateByYear, ([Year, Solar]) => ({ Year, Solar }));
+        climateDataGrouped.sort((a, b) => a.Year - b.Year);
+        console.log("Grouped Climate Data:", climateDataGrouped);
 
-    function processDatasets([rawCrop, rawCO2]) {
-      const cropData = cleanDataset(rawCrop, 'Production', 'Country');
-      const co2Data = cleanDataset(rawCO2, 'Annual CO2 emissions', 'Entity');
-      
-      const commonYears = findCommonYears(cropData, co2Data);
-      if (commonYears.length === 0) {
-        showErrorMessage('No overlapping data available - check data sources');
-        return;
-      }
+        // --------------------------
+        // Populate dropdown with available crops.
+        // --------------------------
+        const crops = Array.from(cropDataGrouped.keys()).sort();
+        d3.select("#cropSelect")
+          .selectAll("option")
+          .data(crops)
+          .enter()
+          .append("option")
+          .attr("value", d => d)
+          .text(d => d);
 
-      analysisData = mergeDatasets(cropData, co2Data, commonYears);
-      initializeVisualization();
-      d3.select('#loading').remove();
-    }
+        // Initially update chart with first crop.
+        updateChart(crops[0]);
 
-    // Updated cleanDataset function with proper column names
-    function cleanDataset(data, valueField, countryField) {
-      return data
-        .filter(d => d[countryField] === 'United States')
-        .map(d => ({
-          year: +d.Year,
-          value: +d[valueField].replace(/,/g, ''),
-          country: d[countryField]
-        }))
-        .filter(d => !isNaN(d.year) && !isNaN(d.value));
-    }
+        // On dropdown change, update chart.
+        d3.select("#cropSelect").on("change", function() {
+          const selectedCrop = d3.select(this).property("value");
+          updateChart(selectedCrop);
+        });
+        
+      }).catch(error => {
+        console.error("Error loading data:", error);
+      });
 
-    function findCommonYears(crop, co2) {
-      const cropYears = new Set(crop.map(d => d.year));
-      return [...new Set(co2.map(d => d.year))]
-        .filter(year => cropYears.has(year))
-        .sort((a, b) => a - b);
-    }
+    // --------------------------
+    // Function to update the dual-axis chart.
+    // --------------------------
+    function updateChart(selectedCrop) {
+      // Clear previous chart elements.
+      svg.selectAll("*").remove();
 
-    function mergeDatasets(crop, co2, years) {
-      return years.map(year => ({
-        year,
-        production: crop.find(d => d.year === year).value,
-        co2: co2.find(d => d.year === year).value
-      }));
-    }
+      // Get crop production data for the selected crop.
+      const cropData = cropDataGrouped.get(selectedCrop);
+      // Merge with climate data by matching Year.
+      const mergedData = cropData.map(d => {
+        const climateEntry = climateDataGrouped.find(c => c.Year === d.Year);
+        return {
+          Year: d.Year,
+          Production: d.Production,
+          Solar: climateEntry ? climateEntry.Solar : null
+        };
+      }).filter(d => d.Solar !== null);
+      console.log("Merged Data for", selectedCrop, ":", mergedData);
 
-    // Rest of the visualization code remains the same
-    function initializeVisualization() {
-      xScale = d3.scaleLinear()
-        .domain(d3.extent(analysisData, d => d.co2))
-        .range([0, width])
-        .nice();
+      // --------------------------
+      // Set up scales.
+      // --------------------------
+      const xScale = d3.scaleLinear()
+                       .domain(d3.extent(mergedData, d => d.Year))
+                       .range([0, width]);
 
-      yScale = d3.scaleLinear()
-        .domain(d3.extent(analysisData, d => d.production))
-        .range([height, 0])
-        .nice();
+      // Left y-scale for Production.
+      const yLeftScale = d3.scaleLinear()
+                           .domain([0, d3.max(mergedData, d => d.Production) * 1.1])
+                           .range([height, 0]);
 
-      zoomBehavior = d3.zoom()
-        .scaleExtent([1, 8])
-        .on('zoom', handleZoom);
+      // Right y-scale for Solar Irradiance.
+      const yRightScale = d3.scaleLinear()
+                            .domain([0, d3.max(mergedData, d => d.Solar) * 1.1])
+                            .range([height, 0]);
 
-      d3.select('#chart').call(zoomBehavior);
-      drawBaseVisualization();
-      addTrendline();
-      addAxes();
-    }
+      // --------------------------
+      // Draw Axes.
+      // --------------------------
+      // X-axis.
+      svg.append("g")
+         .attr("transform", `translate(0,${height})`)
+         .call(d3.axisBottom(xScale).ticks(mergedData.length).tickFormat(d3.format("d")));
 
-    function drawBaseVisualization() {
-      svg.selectAll('.data-point')
-        .data(analysisData)
-        .enter()
-        .append('circle')
-        .attr('class', 'data-point')
-        .attr('cx', d => xScale(d.co2))
-        .attr('cy', d => yScale(d.production))
-        .attr('r', 6)
-        .attr('fill', '#3498db')
-        .attr('stroke', '#fff')
-        .attr('stroke-width', 1)
-        .on('mouseover', showTooltip)
-        .on('mouseout', hideTooltip);
-    }
+      // Left y-axis (Production).
+      svg.append("g")
+         .call(d3.axisLeft(yLeftScale))
+         .append("text")
+         .attr("transform", "rotate(-90)")
+         .attr("y", -50)
+         .attr("x", -height / 2)
+         .attr("dy", "1em")
+         .style("text-anchor", "middle")
+         .text("Average Crop Yield (Production)");
 
-    function addAxes() {
-      svg.append('g')
-        .attr('class', 'x-axis')
-        .attr('transform', `translate(0, ${height})`)
-        .call(d3.axisBottom(xScale).tickFormat(d => `${d/1e6}M t`));
+      // Right y-axis (Solar Irradiance).
+      svg.append("g")
+         .attr("transform", `translate(${width},0)`)
+         .call(d3.axisRight(yRightScale))
+         .append("text")
+         .attr("transform", "rotate(-90)")
+         .attr("y", 40)
+         .attr("x", -height / 2)
+         .attr("dy", "1em")
+         .style("text-anchor", "middle")
+         .text("Avg Solar Irradiance (W/m²)");
 
-      svg.append('text')
-        .attr('x', width/2)
-        .attr('y', height + margin.bottom - 10)
-        .style('text-anchor', 'middle')
-        .text('CO₂ Emissions (Million Metric Tons)');
+      // --------------------------
+      // Define Line Generators.
+      // --------------------------
+      const lineProduction = d3.line()
+                               .x(d => xScale(d.Year))
+                               .y(d => yLeftScale(d.Production));
 
-      svg.append('g')
-        .attr('class', 'y-axis')
-        .call(d3.axisLeft(yScale).tickFormat(d => `${d/1e3}k t`));
+      const lineSolar = d3.line()
+                          .x(d => xScale(d.Year))
+                          .y(d => yRightScale(d.Solar));
 
-      svg.append('text')
-        .attr('transform', 'rotate(-90)')
-        .attr('y', -margin.left + 20)
-        .attr('x', -height/2)
-        .style('text-anchor', 'middle')
-        .text('Crop Production (Thousand Tons)');
-    }
+      // --------------------------
+      // Draw Lines.
+      // --------------------------
+      // Crop production line (blue).
+      svg.append("path")
+         .datum(mergedData)
+         .attr("fill", "none")
+         .attr("stroke", "steelblue")
+         .attr("stroke-width", 2)
+         .attr("d", lineProduction);
 
-    function addTrendline() {
-      const trend = d3.regressionLinear()
-        .x(d => d.co2)
-        .y(d => d.production)
-        (analysisData);
+      // Solar irradiance line (orange).
+      svg.append("path")
+         .datum(mergedData)
+         .attr("fill", "none")
+         .attr("stroke", "orange")
+         .attr("stroke-width", 2)
+         .attr("d", lineSolar);
 
-      svg.append('path')
-        .datum(trend)
-        .attr('class', 'trendline')
-        .attr('d', d3.line()([trend[0], trend[1]]));
-    }
+      // --------------------------
+      // Add Chart Title.
+      // --------------------------
+      svg.append("text")
+         .attr("x", width / 2)
+         .attr("y", -20)
+         .attr("text-anchor", "middle")
+         .style("font-size", "16px")
+         .text(`US Crop Yield vs. Solar Irradiance for ${selectedCrop}`);
 
-    function handleZoom(event) {
-      const newX = event.transform.rescaleX(xScale);
-      const newY = event.transform.rescaleY(yScale);
+      // --------------------------
+      // Add Data Point Circles with Tooltips.
+      // --------------------------
+      // Production data points.
+      svg.selectAll(".dotProd")
+         .data(mergedData)
+         .enter()
+         .append("circle")
+         .attr("class", "dotProd")
+         .attr("cx", d => xScale(d.Year))
+         .attr("cy", d => yLeftScale(d.Production))
+         .attr("r", 4)
+         .attr("fill", "steelblue")
+         .append("title")
+         .text(d => `Year: ${d.Year}\nYield: ${d.Production.toFixed(2)}`);
 
-      svg.selectAll('.data-point')
-        .attr('cx', d => newX(d.co2))
-        .attr('cy', d => newY(d.production));
-
-      svg.select('.x-axis').call(d3.axisBottom(newX));
-      svg.select('.y-axis').call(d3.axisLeft(newY));
-    }
-
-    function resetZoom() {
-      d3.select('#chart').transition()
-        .duration(300)
-        .call(zoomBehavior.transform, d3.zoomIdentity);
-    }
-
-    function showTooltip(event, d) {
-      d3.select('#tooltip')
-        .style('opacity', 1)
-        .style('left', `${event.pageX + 15}px`)
-        .style('top', `${event.pageY - 30}px`)
-        .html(`
-          <div>Year: ${d.year}</div>
-          <div>CO₂: ${(d.co2/1e6).toFixed(1)}M tons</div>
-          <div>Production: ${(d.production/1e3).toFixed(0)}k tons</div>
-        `);
-    }
-
-    function hideTooltip() {
-      d3.select('#tooltip').style('opacity', 0);
-    }
-
-    function handleLoadingError(error) {
-      console.error('Data loading error:', error);
-      d3.select('#loading')
-        .html('<div class="error">⚠️ Error loading data. Please check your connection</div>');
-    }
-
-    function showErrorMessage(message) {
-      d3.select('#loading').html(`<div class="error">⚠️ ${message}</div>`);
+      // Solar irradiance data points.
+      svg.selectAll(".dotSolar")
+         .data(mergedData)
+         .enter()
+         .append("circle")
+         .attr("class", "dotSolar")
+         .attr("cx", d => xScale(d.Year))
+         .attr("cy", d => yRightScale(d.Solar))
+         .attr("r", 4)
+         .attr("fill", "orange")
+         .append("title")
+         .text(d => `Year: ${d.Year}\nSolar: ${d.Solar.toFixed(2)}`);
     }
   </script>
 </body>
