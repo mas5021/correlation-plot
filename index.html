@@ -73,6 +73,23 @@
     #controls label {
       margin-right: 10px;
     }
+    /* Style for the data table */
+    #data-display {
+      margin-top: 2rem;
+    }
+    #data-display table {
+      margin: auto;
+      border-collapse: collapse;
+      width: 80%;
+    }
+    #data-display th, #data-display td {
+      border: 1px solid #ddd;
+      padding: 8px;
+    }
+    #data-display th {
+      background-color: #2c3e50;
+      color: white;
+    }
   </style>
 </head>
 <body>
@@ -90,13 +107,16 @@
   </div>
   <div id="loading">Loading agricultural data...</div>
   <div class="error-message" id="errorBox"></div>
-
+  
+  <!-- Container for displaying merged data values -->
+  <div id="data-display"></div>
+  
   <script>
-    // Gist URLs for CSV files (adjust if needed).
+    // CSV URLs for the datasets
     const CROP_CSV_URL = "https://gist.githubusercontent.com/mystrycodes/3d3cf36c88a4f23a187cb4e12a835e10/raw/CropProduction.csv";
     const CO2_CSV_URL  = "https://gist.githubusercontent.com/mystrycodes/f3e133db6c35f1f7180296e872441fe4/raw/Co2emmission.csv";
 
-    // Basic margin, width, height
+    // Basic margin, width, height for the chart
     const margin = { top: 60, right: 80, bottom: 90, left: 100 };
     const width = 1000 - margin.left - margin.right;
     const height = 600 - margin.top - margin.bottom;
@@ -111,10 +131,11 @@
     let mergedData = [];  // full merged dataset
     let yearSlider = null;
 
-    // 1) Load CSVs individually
+    // Datasets
     let cropData = null;
     let co2Data  = null;
 
+    // Load Crop Data
     d3.csv(CROP_CSV_URL).then(data => {
       console.log("Crop CSV loaded successfully:", data.length, "rows");
       cropData = cleanCropData(data);
@@ -125,6 +146,7 @@
       checkIfBothLoaded();
     });
 
+    // Load CO2 Data
     d3.csv(CO2_CSV_URL).then(data => {
       console.log("CO2 CSV loaded successfully:", data.length, "rows");
       co2Data = cleanCO2Data(data);
@@ -135,8 +157,9 @@
       checkIfBothLoaded();
     });
 
+    // Check if both CSVs have loaded
     function checkIfBothLoaded() {
-      if (cropData === null || co2Data === null) return;  // not both loaded
+      if (cropData === null || co2Data === null) return;
       if (!Array.isArray(cropData) || !Array.isArray(co2Data)) {
         showError("One dataset is invalid. Check console for details.");
         return;
@@ -147,7 +170,7 @@
     // Clean crop dataset
     function cleanCropData(raw) {
       // Crop CSV columns: index,Country,INDICATOR,SUBJECT,MEASURE,FREQUENCY,TIME,Value,Flag Codes
-      // Use TIME as year, Value as production
+      // Filter for US data and map required fields
       const filtered = raw.filter(d => d.Country && d.Country.includes("United States"));
       console.log("Filtered Crop Data (US):", filtered.length, "rows");
       return filtered.map(d => ({
@@ -160,6 +183,7 @@
     // Clean CO₂ dataset
     function cleanCO2Data(raw) {
       // CO₂ CSV columns: Country,Year,Savanna fires,...,total_emission,...
+      // Filter for US data and map required fields
       const filtered = raw.filter(d => d.Country && d.Country.includes("United States"));
       console.log("Filtered CO2 Data (US):", filtered.length, "rows");
       return filtered.map(d => ({
@@ -169,7 +193,7 @@
       })).filter(d => !isNaN(d.year) && !isNaN(d.co2));
     }
 
-    // Merge Datasets by year
+    // Merge Datasets by year and then visualize
     function mergeAndVisualize() {
       const commonYears = findCommonYears(cropData, co2Data);
       console.log("Common Years:", commonYears);
@@ -189,11 +213,15 @@
       }
       document.getElementById("loading").remove();
 
-      // Initialize slider
+      // Initialize slider and visualization
       initSlider();
       initializeVisualization();
+
+      // Display merged data values in a table
+      displayData();
     }
 
+    // Find common years between datasets
     function findCommonYears(crop, co2) {
       const cropYears = new Set(crop.map(d => d.year));
       return [...new Set(co2.map(d => d.year))]
@@ -201,8 +229,8 @@
         .sort((a, b) => a - b);
     }
 
+    // Initialize the slider for filtering by year
     function initSlider() {
-      // Determine min & max year in mergedData
       const minYear = d3.min(mergedData, d => d.year);
       const maxYear = d3.max(mergedData, d => d.year);
       yearSlider = document.getElementById("yearSlider");
@@ -217,9 +245,10 @@
       };
     }
 
-    let filteredData = [];  // data after year filtering
+    let filteredData = [];  // data filtered by year
     let pointsGroup = null;
 
+    // Initialize the visualization (axes, zoom, points)
     function initializeVisualization() {
       // Create scales
       xScale = d3.scaleLinear()
@@ -236,28 +265,30 @@
       const [minY, maxY] = d3.extent(mergedData, d => d.year);
       colorScale = d3.scaleSequential(d3.interpolateTurbo).domain([minY, maxY]);
 
-      // Zoom
+      // Zoom behavior
       zoomBehavior = d3.zoom()
         .scaleExtent([1, 8])
         .on("zoom", handleZoom);
 
       d3.select("#chart").call(zoomBehavior);
 
-      // Add axes once
+      // Add axes
       addAxes();
+
       // Create a group for data points
       pointsGroup = svg.append("g").attr("class", "points-group");
-      // Now do initial chart update
+
+      // Draw initial chart using the minimum year
       updateChart(d3.min(mergedData, d => d.year));
     }
 
+    // Update chart based on the selected minimum year
     function updateChart(minYearSelected) {
-      // Filter data
       filteredData = mergedData.filter(d => d.year >= minYearSelected);
 
-      // Remove old points
+      // Remove old points and trendline
       pointsGroup.selectAll(".data-point").remove();
-      svg.selectAll(".trendline").remove(); // remove old trendline
+      svg.selectAll(".trendline").remove();
 
       // Draw new points
       pointsGroup.selectAll(".data-point")
@@ -274,17 +305,11 @@
         .on("mouseover", showTooltip)
         .on("mouseout", hideTooltip);
 
-      // Recompute domain if you want dynamic axes based on filtered data
-      // (Commented out if you prefer fixed axes.)
-      // xScale.domain(d3.extent(filteredData, d => d.co2)).nice();
-      // yScale.domain(d3.extent(filteredData, d => d.production)).nice();
-      // svg.select(".x-axis").call(d3.axisBottom(xScale).tickFormat(...));
-      // svg.select(".y-axis").call(d3.axisLeft(yScale).tickFormat(...));
-
-      // Add updated trendline
+      // Add trendline for filtered data
       addTrendline();
     }
 
+    // Add X and Y axes
     function addAxes() {
       // X-axis
       svg.append("g")
@@ -311,8 +336,9 @@
         .text("Crop Production (Thousand Tons)");
     }
 
+    // Add a trendline to the chart
     function addTrendline() {
-      if (filteredData.length < 2) return; // Need at least 2 points
+      if (filteredData.length < 2) return;
       const lr = linearRegression(filteredData);
       const xExt = d3.extent(filteredData, d => d.co2);
       const trendData = xExt.map(xVal => ({
@@ -330,6 +356,7 @@
         .attr("stroke-dasharray", "4,2");
     }
 
+    // Handle zoom events
     function handleZoom(event) {
       const newX = event.transform.rescaleX(xScale);
       const newY = event.transform.rescaleY(yScale);
@@ -342,12 +369,14 @@
       svg.select(".y-axis").call(d3.axisLeft(newY).tickFormat(d => `${(d/1e3).toFixed(0)}k t`));
     }
 
+    // Reset zoom to the default view
     function resetZoom() {
       d3.select("#chart").transition()
         .duration(300)
         .call(zoomBehavior.transform, d3.zoomIdentity);
     }
 
+    // Tooltip functions
     function showTooltip(event, d) {
       d3.select('#tooltip')
         .style('opacity', 1)
@@ -364,7 +393,7 @@
       d3.select('#tooltip').style('opacity', 0);
     }
 
-    // Simple linear regression
+    // Simple linear regression calculation
     function linearRegression(data) {
       const n = data.length;
       let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
@@ -379,6 +408,24 @@
       return { slope, intercept };
     }
 
+    // Function to display merged data values in a table
+    function displayData() {
+      const displayDiv = document.getElementById("data-display");
+      let html = '<h2>Merged Data Values</h2>';
+      html += '<table>';
+      html += '<tr><th>Year</th><th>CO₂ Emissions (t)</th><th>Crop Production (t)</th></tr>';
+      mergedData.forEach(d => {
+        html += `<tr>
+                   <td>${d.year}</td>
+                   <td>${d.co2}</td>
+                   <td>${d.production}</td>
+                 </tr>`;
+      });
+      html += '</table>';
+      displayDiv.innerHTML = html;
+    }
+
+    // Display error messages
     function showError(msg) {
       document.getElementById("errorBox").innerText = msg;
     }
