@@ -19,16 +19,6 @@
       color: #7f8c8d;
       margin-bottom: 1.5rem;
     }
-    #controls {
-      margin: 1.5rem 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      gap: 1rem;
-    }
-    #yearSlider {
-      width: 300px;
-    }
     #chart {
       background: white;
       border-radius: 8px;
@@ -50,6 +40,19 @@
       stroke-width: 2;
       stroke-dasharray: 4 2;
     }
+    .data-point:hover {
+      stroke: #e67e22;
+      stroke-width: 2px;
+    }
+    .zoom-controls {
+      position: absolute;
+      top: 100px;
+      right: 20px;
+      background: white;
+      padding: 10px;
+      border-radius: 5px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
     #loading {
       position: fixed;
       top: 50%;
@@ -65,71 +68,58 @@
 <body>
   <h1>US Agricultural Analysis: CO₂ vs Crop Production</h1>
   <div id="dataInfo"></div>
-  <div id="controls">
-    <label for="yearSlider">Analysis Start Year:</label>
-    <input type="range" id="yearSlider" min="0" max="0" step="1">
-    <span id="currentYear" style="font-weight: bold; color: #2980b9;"></span>
+  <div class="zoom-controls">
+    <button onclick="resetZoom()">Reset Zoom</button>
   </div>
   <svg id="chart" width="1000" height="600"></svg>
   <div id="tooltip" class="tooltip"></div>
   <div id="loading">Loading agricultural data...</div>
 
   <script>
-    // Configuration
     const DATA_URLS = {
       crop: 'https://gist.githubusercontent.com/mystrycodes/3d3cf36c88a4f23a187cb4e12a835e10/raw/CropProduction.csv',
       co2: 'https://gist.githubusercontent.com/mystrycodes/f3e133db6c35f1f7180296e872441fe4/raw/Co2emmission.csv'
     };
 
-    // Visualization setup
-    const svg = d3.select('#chart');
     const margin = { top: 60, right: 80, bottom: 90, left: 100 };
     const width = 1000 - margin.left - margin.right;
     const height = 600 - margin.top - margin.bottom;
-    const chart = svg.append('g').attr('transform', `translate(${margin.left}, ${margin.top})`);
+    
+    const svg = d3.select('#chart')
+      .append('g')
+      .attr('transform', `translate(${margin.left}, ${margin.top})`);
 
-    // State management
+    let xScale, yScale, zoomBehavior;
     let analysisData = [];
-    let yearRange = { min: 0, max: 0 };
 
-    // Initialize visualization
     Promise.all([d3.csv(DATA_URLS.crop), d3.csv(DATA_URLS.co2)])
       .then(processDatasets)
       .catch(handleLoadingError);
 
-    // Data processing pipeline
     function processDatasets([rawCrop, rawCO2]) {
-      // Validate and clean datasets
       const cropData = cleanDataset(rawCrop, 'Production');
-      const co2Data = cleanDataset(rawCO2, 'CO2', 'total_emission');
+      const co2Data = cleanDataset(rawCO2, 'Annual CO₂ emissions');
       
-      // Find common year range
       const commonYears = findCommonYears(cropData, co2Data);
       if (commonYears.length === 0) {
-        showErrorMessage('No overlapping data between CO₂ and crop datasets');
+        showErrorMessage('No overlapping data available');
         return;
       }
 
-      // Merge datasets
       analysisData = mergeDatasets(cropData, co2Data, commonYears);
-      initializeControls(commonYears);
-      updateVisualization(commonYears[0]);
+      initializeVisualization();
+      d3.select('#loading').remove();
     }
 
-    function cleanDataset(data, valueField, co2Field = null) {
+    function cleanDataset(data, valueField) {
       return data
-        .filter(d => d.Country === 'United States')
+        .filter(d => (d.Country === 'United States' || d.Entity === 'United States'))
         .map(d => ({
-          year: validateYear(d.Year),
-          value: parseFloat(co2Field ? d[co2Field] : d[valueField]),
-          country: d.Country
+          year: +d.Year,
+          value: +d[valueField].replace(/,/g, ''),
+          country: d.Country || d.Entity
         }))
-        .filter(d => d.year && !isNaN(d.value));
-    }
-
-    function validateYear(year) {
-      const y = parseInt(year);
-      return y >= 1990 && y <= 2023 ? y : null;
+        .filter(d => !isNaN(d.year) && !isNaN(d.value));
     }
 
     function findCommonYears(crop, co2) {
@@ -140,136 +130,113 @@
     }
 
     function mergeDatasets(crop, co2, years) {
-      return years.map(year => {
-        const cropEntry = crop.find(d => d.year === year);
-        const co2Entry = co2.find(d => d.year === year);
-        return {
-          year,
-          production: cropEntry.value,
-          co2: co2Entry.value
-        };
-      });
+      return years.map(year => ({
+        year,
+        production: crop.find(d => d.year === year).value,
+        co2: co2.find(d => d.year === year).value
+      }));
     }
 
-    // Visualization functions
-    function initializeControls(years) {
-      yearRange = { min: Math.min(...years), max: Math.max(...years) };
-      
-      d3.select('#yearSlider')
-        .attr('min', yearRange.min)
-        .attr('max', yearRange.max)
-        .attr('value', yearRange.min)
-        .on('input', function() {
-          const selectedYear = +this.value;
-          d3.select('#currentYear').text(selectedYear);
-          updateVisualization(selectedYear);
-        });
-
-      d3.select('#dataInfo')
-        .html(`<strong>Data Range:</strong> ${yearRange.min} - ${yearRange.max}<br>
-              <em>All values normalized to US agricultural metrics</em>`);
-
-      d3.select('#currentYear').text(yearRange.min);
-      d3.select('#loading').style('display', 'none');
-    }
-
-    function updateVisualization(startYear) {
-      const filteredData = analysisData.filter(d => d.year >= startYear);
-      chart.selectAll('*').remove();
-
-      if (filteredData.length < 2) {
-        displayDataMessage(filteredData.length === 0 
-          ? 'No data available for selected range'
-          : 'Select at least two years for analysis');
-        return;
-      }
-
-      // Create scales
-      const xScale = d3.scaleLinear()
-        .domain(d3.extent(filteredData, d => d.co2))
+    function initializeVisualization() {
+      xScale = d3.scaleLinear()
+        .domain(d3.extent(analysisData, d => d.co2))
         .range([0, width])
         .nice();
 
-      const yScale = d3.scaleLinear()
-        .domain(d3.extent(filteredData, d => d.production))
+      yScale = d3.scaleLinear()
+        .domain(d3.extent(analysisData, d => d.production))
         .range([height, 0])
         .nice();
 
-      // Create axes
-      const xAxis = d3.axisBottom(xScale)
-        .tickFormat(d => `${d}M t`);
-      const yAxis = d3.axisLeft(yScale)
-        .tickFormat(d => `${d}k t`);
+      zoomBehavior = d3.zoom()
+        .scaleExtent([1, 8])
+        .on('zoom', handleZoom);
 
-      chart.append('g')
-        .attr('transform', `translate(0, ${height})`)
-        .call(xAxis)
-        .append('text')
-        .attr('x', width / 2)
-        .attr('y', 40)
-        .attr('fill', '#2c3e50')
-        .text('CO₂ Emissions (Million Metric Tons)');
+      d3.select('#chart').call(zoomBehavior);
+      drawBaseVisualization();
+      addTrendline();
+      addAxes();
+    }
 
-      chart.append('g')
-        .call(yAxis)
-        .append('text')
-        .attr('transform', 'rotate(-90)')
-        .attr('y', -60)
-        .attr('x', -height / 2)
-        .attr('fill', '#2c3e50')
-        .text('Crop Production (Thousand Tons)');
-
-      // Draw data points
-      chart.selectAll('.data-point')
-        .data(filteredData)
+    function drawBaseVisualization() {
+      svg.selectAll('.data-point')
+        .data(analysisData)
         .enter()
         .append('circle')
         .attr('class', 'data-point')
         .attr('cx', d => xScale(d.co2))
         .attr('cy', d => yScale(d.production))
-        .attr('r', 7)
+        .attr('r', 6)
         .attr('fill', '#3498db')
         .attr('stroke', '#fff')
         .attr('stroke-width', 1)
         .on('mouseover', showTooltip)
         .on('mouseout', hideTooltip);
-
-      // Add trendline
-      if (filteredData.length >= 2) {
-        const trend = calculateTrend(filteredData);
-        chart.append('line')
-          .attr('class', 'trendline')
-          .attr('x1', xScale(trend.xMin))
-          .attr('y1', yScale(trend.yMin))
-          .attr('x2', xScale(trend.xMax))
-          .attr('y2', yScale(trend.yMax));
-      }
     }
 
-    function calculateTrend(data) {
-      const xExtent = d3.extent(data, d => d.co2);
-      const lr = d3.regressionLinear()
+    function addAxes() {
+      svg.append('g')
+        .attr('class', 'x-axis')
+        .attr('transform', `translate(0, ${height})`)
+        .call(d3.axisBottom(xScale).tickFormat(d => `${d/1e6}M t`));
+
+      svg.append('text')
+        .attr('x', width/2)
+        .attr('y', height + margin.bottom - 10)
+        .style('text-anchor', 'middle')
+        .text('CO₂ Emissions (Million Metric Tons)');
+
+      svg.append('g')
+        .attr('class', 'y-axis')
+        .call(d3.axisLeft(yScale).tickFormat(d => `${d/1e3}k t`));
+
+      svg.append('text')
+        .attr('transform', 'rotate(-90)')
+        .attr('y', -margin.left + 20)
+        .attr('x', -height/2)
+        .style('text-anchor', 'middle')
+        .text('Crop Production (Thousand Tons)');
+    }
+
+    function addTrendline() {
+      const trend = d3.regressionLinear()
         .x(d => d.co2)
         .y(d => d.production)
-        (data);
-      return {
-        xMin: xExtent[0],
-        yMin: lr[0][1],
-        xMax: xExtent[1],
-        yMax: lr[1][1]
-      };
+        (analysisData);
+
+      svg.append('path')
+        .datum(trend)
+        .attr('class', 'trendline')
+        .attr('d', d3.line()([trend[0], trend[1]]));
     }
 
-    // Interaction handlers
+    function handleZoom(event) {
+      const newX = event.transform.rescaleX(xScale);
+      const newY = event.transform.rescaleY(yScale);
+
+      svg.selectAll('.data-point')
+        .attr('cx', d => newX(d.co2))
+        .attr('cy', d => newY(d.production));
+
+      svg.select('.x-axis').call(d3.axisBottom(newX));
+      svg.select('.y-axis').call(d3.axisLeft(newY));
+    }
+
+    function resetZoom() {
+      d3.select('#chart').transition()
+        .duration(300)
+        .call(zoomBehavior.transform, d3.zoomIdentity);
+    }
+
     function showTooltip(event, d) {
       d3.select('#tooltip')
         .style('opacity', 1)
         .style('left', `${event.pageX + 15}px`)
         .style('top', `${event.pageY - 30}px`)
         .html(`
-          <div class="tooltip-year">${d.year}</div>
-          <div>CO₂: ${d.co2.toLocaleString()}M tons</div>
-          <div>Production: ${d.production.toLocaleString()}k tons</div>
+          <div>Year: ${d.year}</div>
+          <div>CO₂: ${(d.co2/1e6).toFixed(1)}M tons</div>
+          <div>Production: ${(d.production/1e3).toFixed(0)}k tons</div>
         `);
     }
 
@@ -277,20 +244,14 @@
       d3.select('#tooltip').style('opacity', 0);
     }
 
-    // Error handling
     function handleLoadingError(error) {
       console.error('Data loading error:', error);
       d3.select('#loading')
-        .html('<div class="error">⚠️ Error loading data. Please try refreshing the page.</div>');
+        .html('<div class="error">⚠️ Error loading data. Please check your connection</div>');
     }
 
-    function displayDataMessage(message) {
-      chart.append('text')
-        .attr('x', width / 2)
-        .attr('y', height / 2)
-        .attr('text-anchor', 'middle')
-        .attr('fill', '#7f8c8d')
-        .text(message);
+    function showErrorMessage(message) {
+      d3.select('#loading').html(`<div class="error">⚠️ ${message}</div>`);
     }
   </script>
 </body>
